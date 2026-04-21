@@ -19,9 +19,10 @@ export class UIManager {
     this.myName = document.getElementById('myNameDisplay');
     this.myAvatar = document.getElementById('myAvatarDisplay');
     this.editProfileBtn = document.getElementById('editProfileBtn');
-    this.editProfileModal = document.getElementById('editProfileModal');
-    this.closeEditBtn = document.getElementById('closeEditBtn');
+    this.profileModal = document.getElementById('profileModal');
+    this.closeProfileBtn = document.getElementById('closeProfileBtn');
     this.saveProfileBtn = document.getElementById('saveProfileBtn');
+    this.randomizeAvatarBtn = document.getElementById('randomizeAvatarBtn');
     this.editNameInput = document.getElementById('editNameInput');
     this.editAvatarPreview = document.getElementById('editAvatarPreview');
     this.avatarOptions = document.querySelectorAll('.avatar-option');
@@ -57,25 +58,28 @@ export class UIManager {
 
     // Profile Edit
     this.editProfileBtn.addEventListener('click', () => {
-      this.editProfileModal.style.display = 'flex';
+      this.profileModal.style.display = 'flex';
     });
-    this.closeEditBtn.addEventListener('click', () => {
-      this.editProfileModal.style.display = 'none';
+    this.closeProfileBtn.addEventListener('click', () => {
+      this.profileModal.style.display = 'none';
     });
+    
     this.saveProfileBtn.addEventListener('click', () => {
       const newName = this.editNameInput.value.trim();
       const newAvatar = this.editAvatarPreview.textContent;
       if (newName) {
         window.dispatchEvent(new CustomEvent('profileUpdate', { detail: { name: newName, avatar: newAvatar } }));
-        this.editProfileModal.style.display = 'none';
+        this.profileModal.style.display = 'none';
       }
     });
 
-    this.avatarOptions.forEach(opt => {
-      opt.addEventListener('click', () => {
-        this.editAvatarPreview.textContent = opt.textContent;
+    if (this.avatarOptions.length > 0) {
+      this.avatarOptions.forEach(opt => {
+        opt.addEventListener('click', () => {
+          this.editAvatarPreview.textContent = opt.textContent;
+        });
       });
-    });
+    }
 
     // Copy room code
     if (this.copyRoomCodeBtn) {
@@ -111,11 +115,13 @@ export class UIManager {
 
     // Transfer sheet drag-to-dismiss
     const handleSheet = document.querySelector('.sheet-handle');
-    let startY = 0;
-    handleSheet.addEventListener('touchstart', e => { startY = e.touches[0].clientY; });
-    handleSheet.addEventListener('touchmove', e => {
-       if (e.touches[0].clientY - startY > 50) this.hideTransferSheet();
-    });
+    if (handleSheet) {
+      let startY = 0;
+      handleSheet.addEventListener('touchstart', e => { startY = e.touches[0].clientY; });
+      handleSheet.addEventListener('touchmove', e => {
+         if (e.touches[0].clientY - startY > 50) this.hideTransferSheet();
+      });
+    }
 
     if (this.clearTransfersBtn) {
       this.clearTransfersBtn.addEventListener('click', () => {
@@ -237,12 +243,13 @@ export class UIManager {
     this.transferTitle.textContent = "Transfers in Progress";
     if (this.clearTransfersBtn) this.clearTransfersBtn.style.display = 'block';
 
-    let item = document.getElementById(`transfer-${peerId}-${filename}`); // Use filename in ID to support multiple files
+    let itemStr = `transfer-${peerId}-${filename}`.replace(/[^a-zA-Z0-9-]/g, '');
+    let item = document.getElementById(itemStr); 
     if (!item) {
       this.transferStatus.style.display = 'none';
       item = document.createElement('div');
       item.className = 'transfer-item';
-      item.id = `transfer-${peerId}-${filename}`;
+      item.id = itemStr;
       item.innerHTML = `
         <div class="transfer-header">
           <span class="transfer-name">${filename}</span>
@@ -293,22 +300,9 @@ export class UIManager {
     // Clear generating text
     this.qrCodeContainer.innerHTML = '';
     
-    // Generate QR using the global QRCode source in index.html or we can use a library
-    // If QRCode exists globally (e.g. from script tag)
-    if (window.QRCode) {
-      new QRCode(this.qrCodeContainer, {
-        text: qrUrl,
-        width: 180,
-        height: 180,
-        colorDark: "#ffffff",
-        colorLight: "#000000",
-        correctLevel: QRCode.CorrectLevel.H
-      });
-    } else {
-      // Fallback: use an image API if library not loaded
-      const qrImg = document.createElement('img');
-      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrUrl)}&bgcolor=0a0a0a&color=ffffff`;
-      this.qrCodeContainer.appendChild(qrImg);
-    }
+    // Fallback: use an image API if library not loaded
+    const qrImg = document.createElement('img');
+    qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrUrl)}&bgcolor=0a0a0a&color=ffffff`;
+    this.qrCodeContainer.appendChild(qrImg);
   }
 }
