@@ -70,6 +70,8 @@ function init() {
       if (signal.action === 'announce') {
          peerMetadata.set(fromPeerId, { name: signal.name, avatar: signal.avatar });
          uiManager.addPeer(fromPeerId, signal.name, signal.avatar);
+         // Pre-connect WebRTC immediately so file transfer is instant when user taps Send
+         webrtcManager.preConnect(fromPeerId);
          return;
       }
       // Otherwise it's an RTC signal
@@ -170,14 +172,33 @@ function init() {
   const signalingUrl = import.meta.env.VITE_SIGNALING_URL;
   if (signalingUrl) {
     const ping = () => fetch(`${signalingUrl}/health`).catch(() => {});
-    ping(); // Wake it up immediately on page load
-    setInterval(ping, 13 * 60 * 1000); // Then every 13 minutes
+    ping();
+    setInterval(ping, 13 * 60 * 1000);
   }
+
+  // Mobile: reconnect WebSocket when app comes back to foreground
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      if (!signalingClient.ws || signalingClient.ws.readyState > 1) {
+        signalingClient.connect();
+      }
+    }
+  });
+
+  // Cancel support
+  uiManager.onCancelTransfer = (peerId, direction) => {
+    if (direction === 'send') {
+      webrtcManager.cancelSend(peerId);
+    } else {
+      webrtcManager.cancelReceive(peerId);
+    }
+    uiManager.showToast('Transfer cancelled');
+    uiManager.setPeerStatus(peerId, 'Ready to receive');
+  };
 
   // PWA Install Prompt Logic
   let deferredPrompt;
   
-  // 1. Check if already installed
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
   
   if (!isStandalone) {

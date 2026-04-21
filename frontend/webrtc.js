@@ -1,19 +1,32 @@
 // webrtc.js
-const CHUNK_SIZE = 64 * 1024; // 64KB per chunk
+
+// Adaptive chunk size: 256KB for max speed on local connections
+const CHUNK_SIZE = 256 * 1024;
+const RELAY_CHUNK_SIZE = 16 * 1024;
 
 export class WebRTCManager {
   constructor(signalingClient, onProgress, onFileComplete) {
     this.signalingClient = signalingClient;
     this.onProgress = onProgress;
     this.onFileComplete = onFileComplete;
-    this.onTransferStart = null; // Called with (peerId, filename, direction: 'send'|'receive')
+    this.onTransferStart = null;
     this.connections = new Map();
     this.channels = new Map();
     this.incomingFiles = new Map();
+    this.activeSends = new Map(); // peerId -> { cancelled: bool } for cancel support
   }
 
   createConnection(peerId, isInitiator) {
-    if (this.connections.has(peerId)) return this.connections.get(peerId);
+    if (this.connections.has(peerId)) {
+      const existing = this.connections.get(peerId);
+      // If connection is still alive, reuse it
+      if (existing.connectionState !== 'closed' && existing.connectionState !== 'failed') {
+        return existing;
+      }
+      // Otherwise clean up and create new
+      this.connections.delete(peerId);
+      this.channels.delete(peerId);
+    }
 
     const rtcConfig = {
       iceServers: [
@@ -36,7 +49,7 @@ export class WebRTCManager {
           credential: 'openrelayproject'
         }
       ],
-      iceCandidatePoolSize: 10 // Pre-gather ICE candidates for faster connection in complex networks
+      iceCandidatePoolSize: 10
     };
 
     const pc = new RTCPeerConnection(rtcConfig);
@@ -47,8 +60,19 @@ export class WebRTCManager {
       }
     };
 
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        this.connections.delete(peerId);
+        this.channels.delete(peerId);
+      }
+    };
+
     if (isInitiator) {
-      const channel = pc.createDataChannel('fileTransfer');
+      // Create high-throughput data channel
+      const channel = pc.createDataChannel('fileTransfer', {
+        ordered: true,
+        maxRetransmits: 30
+      });
       this.setupChannel(peerId, channel);
 
       pc.createOffer().then(offer => {
@@ -66,14 +90,24 @@ export class WebRTCManager {
     return pc;
   }
 
+  // Pre-connect to a peer as soon as they're discovered (for instant file transfer later)
+  preConnect(peerId) {
+    if (!this.connections.has(peerId) && !this.channels.has(peerId)) {
+      this.createConnection(peerId, true);
+    }
+  }
+
   setupChannel(peerId, channel) {
     channel.binaryType = 'arraybuffer';
+    // Set high buffer threshold for speed
+    if (typeof channel.bufferedAmountLowThreshold !== 'undefined') {
+      channel.bufferedAmountLowThreshold = 2 * 1024 * 1024; // 2MB buffer
+    }
     this.channels.set(peerId, channel);
 
     channel.onopen = () => {};
     channel.onclose = () => {
       this.channels.delete(peerId);
-      this.connections.delete(peerId);
     };
 
     channel.onmessage = (event) => {
@@ -109,7 +143,6 @@ export class WebRTCManager {
           receivedSize: 0,
           chunks: []
         });
-        // Notify UI: receiving file from peer
         if (this.onTransferStart) this.onTransferStart(peerId, meta.name, 'receive');
         if (this.onProgress) this.onProgress(peerId, meta.name, 0, meta.size, 'receive');
 
@@ -120,7 +153,7 @@ export class WebRTCManager {
         const blob = new Blob(fileData.chunks, { type: fileData.meta.mimeType });
         this.incomingFiles.delete(peerId);
 
-        // Send ACK back to sender
+        // Send ACK
         const channel = this.channels.get(peerId);
         if (channel && channel.readyState === 'open') {
           channel.send(JSON.stringify({ type: 'ack', filename: fileData.meta.name }));
@@ -134,21 +167,20 @@ export class WebRTCManager {
         a.download = fileData.meta.name;
         document.body.appendChild(a);
         a.click();
-
-        setTimeout(() => {
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        }, 100);
+        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
 
         if (this.onFileComplete) this.onFileComplete(peerId, fileData.meta.name, 'receive');
 
       } else if (meta.type === 'ack') {
-        // Sender received ACK from receiver — file delivered successfully
         if (this.onFileComplete) this.onFileComplete(peerId, meta.filename, 'send');
+
+      } else if (meta.type === 'cancel') {
+        // Sender cancelled — discard partial data
+        this.incomingFiles.delete(peerId);
+        if (this.onProgress) this.onProgress(peerId, meta.filename || 'file', -1, 0, 'receive');
       }
 
     } else {
-      // Binary chunk
       const fileData = this.incomingFiles.get(peerId);
       if (fileData) {
         fileData.chunks.push(data);
@@ -157,6 +189,25 @@ export class WebRTCManager {
         if (this.onProgress) this.onProgress(peerId, fileData.meta.name, progress, fileData.meta.size, 'receive');
       }
     }
+  }
+
+  // Cancel an ongoing send
+  cancelSend(peerId) {
+    const sendState = this.activeSends.get(peerId);
+    if (sendState) {
+      sendState.cancelled = true;
+      // Notify receiver
+      const channel = this.channels.get(peerId);
+      if (channel && channel.readyState === 'open') {
+        channel.send(JSON.stringify({ type: 'cancel', filename: sendState.filename }));
+      }
+      this.activeSends.delete(peerId);
+    }
+  }
+
+  // Cancel an ongoing receive
+  cancelReceive(peerId) {
+    this.incomingFiles.delete(peerId);
   }
 
   sendFile(peerId, file, retryCount = 0) {
@@ -173,17 +224,14 @@ export class WebRTCManager {
       return;
     }
 
-    // Notify UI: sending file to peer
+    // Track send state for cancel support
+    const sendState = { cancelled: false, filename: file.name };
+    this.activeSends.set(peerId, sendState);
+
     if (this.onTransferStart) this.onTransferStart(peerId, file.name, 'send');
 
-    const header = {
-      type: 'header',
-      name: file.name,
-      size: file.size,
-      mimeType: file.type
-    };
+    const header = { type: 'header', name: file.name, size: file.size, mimeType: file.type };
     channel.send(JSON.stringify(header));
-
     if (this.onProgress) this.onProgress(peerId, file.name, 0, file.size, 'send');
 
     let offset = 0;
@@ -191,26 +239,33 @@ export class WebRTCManager {
 
     reader.onload = (e) => {
       const sendNextChunk = () => {
-         if (channel.bufferedAmount > channel.bufferedAmountLowThreshold) {
-            channel.onbufferedamountlow = () => {
-                channel.onbufferedamountlow = null;
-                sendNextChunk();
-            };
-            return;
-         }
+        // Check if cancelled
+        if (sendState.cancelled) {
+          this.activeSends.delete(peerId);
+          return;
+        }
 
-         channel.send(e.target.result);
-         offset += e.target.result.byteLength;
+        if (channel.bufferedAmount > channel.bufferedAmountLowThreshold) {
+          channel.onbufferedamountlow = () => {
+            channel.onbufferedamountlow = null;
+            sendNextChunk();
+          };
+          return;
+        }
 
-         const progress = Math.min((offset / file.size) * 100, 100);
-         if (this.onProgress) this.onProgress(peerId, file.name, progress, file.size, 'send');
+        channel.send(e.target.result);
+        offset += e.target.result.byteLength;
 
-         if (offset < file.size) {
-            readSlice(offset);
-         } else {
-            channel.send(JSON.stringify({ type: 'done' }));
-         }
-      }
+        const progress = Math.min((offset / file.size) * 100, 100);
+        if (this.onProgress) this.onProgress(peerId, file.name, progress, file.size, 'send');
+
+        if (offset < file.size) {
+          readSlice(offset);
+        } else {
+          channel.send(JSON.stringify({ type: 'done' }));
+          this.activeSends.delete(peerId);
+        }
+      };
       sendNextChunk();
     };
 
@@ -219,37 +274,34 @@ export class WebRTCManager {
       reader.readAsArrayBuffer(slice);
     };
 
-    channel.bufferedAmountLowThreshold = 1000000;
+    channel.bufferedAmountLowThreshold = 2 * 1024 * 1024; // 2MB for speed
     readSlice(0);
   }
 
   arrayBufferToBase64(buffer) {
     let binary = '';
     const bytes = new Uint8Array(buffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
     return window.btoa(binary);
   }
 
   handleRelayData(peerId, rawPayload) {
     let msg;
     try { msg = JSON.parse(rawPayload); } catch { return; }
-    if (msg.type === 'header' || msg.type === 'done' || msg.type === 'ack') {
-        this.handleIncomingData(peerId, rawPayload);
+    if (msg.type === 'header' || msg.type === 'done' || msg.type === 'ack' || msg.type === 'cancel') {
+      this.handleIncomingData(peerId, rawPayload);
     } else if (msg.type === 'chunk') {
-        const binaryString = window.atob(msg.data);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-        this.handleIncomingData(peerId, bytes.buffer);
+      const binaryString = window.atob(msg.data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+      this.handleIncomingData(peerId, bytes.buffer);
     }
   }
 
   sendFileRelay(peerId, file) {
+    const sendState = { cancelled: false, filename: file.name };
+    this.activeSends.set(peerId, sendState);
+
     if (this.onTransferStart) this.onTransferStart(peerId, file.name, 'send');
 
     const header = { type: 'header', name: file.name, size: file.size, mimeType: file.type };
@@ -260,6 +312,8 @@ export class WebRTCManager {
     const reader = new FileReader();
 
     reader.onload = (e) => {
+      if (sendState.cancelled) { this.activeSends.delete(peerId); return; }
+
       const base64 = this.arrayBufferToBase64(e.target.result);
       this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'chunk', data: base64 }));
       offset += e.target.result.byteLength;
@@ -271,12 +325,13 @@ export class WebRTCManager {
         setTimeout(() => readSlice(offset), 10);
       } else {
         this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'done' }));
+        this.activeSends.delete(peerId);
         if (this.onFileComplete) this.onFileComplete(peerId, file.name, 'send');
       }
     };
 
     const readSlice = (o) => {
-      const slice = file.slice(o, o + 16 * 1024);
+      const slice = file.slice(o, o + RELAY_CHUNK_SIZE);
       reader.readAsArrayBuffer(slice);
     };
     readSlice(0);

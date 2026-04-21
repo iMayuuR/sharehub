@@ -283,11 +283,27 @@ export class UIManager {
   }
 
   updateProgress(peerId, filename, progress, totalSize, direction = 'send') {
+    // progress = -1 means cancelled
+    const transferId = `transfer-${direction}-${peerId}`;
+
+    if (progress === -1) {
+      // Transfer was cancelled by the other side
+      const item = document.getElementById(transferId);
+      if (item) {
+        const pText = item.querySelector('.transfer-percent');
+        const cancelBtn = item.querySelector('.btn-cancel-transfer');
+        if (pText) pText.textContent = '❌ Cancelled';
+        if (cancelBtn) cancelBtn.remove();
+      }
+      this.showToast(`Transfer cancelled`);
+      this.setPeerStatus(peerId, 'Ready to receive');
+      return;
+    }
+
     this.showTransferSheet();
     this.transferTitle.textContent = "Transfers in Progress";
     if (this.clearTransfersBtn) this.clearTransfersBtn.style.display = 'block';
 
-    const transferId = `transfer-${direction}-${peerId}`;
     let item = document.getElementById(transferId);
     const dirLabel = direction === 'send' ? '⬆ Sending' : '⬇ Receiving';
 
@@ -301,11 +317,22 @@ export class UIManager {
           <span class="transfer-direction">${dirLabel}</span>
           <span class="transfer-name">${filename}</span>
           <span class="transfer-percent">0%</span>
+          <button class="btn-cancel-transfer" title="Cancel">✕</button>
         </div>
         <div class="transfer-progress-bar">
           <div class="transfer-progress-fill ${direction === 'receive' ? 'receive' : ''}"></div>
         </div>
       `;
+
+      // Wire cancel button
+      const cancelBtn = item.querySelector('.btn-cancel-transfer');
+      cancelBtn.addEventListener('click', () => {
+        if (this.onCancelTransfer) this.onCancelTransfer(peerId, direction);
+        const pText = item.querySelector('.transfer-percent');
+        if (pText) pText.textContent = '❌ Cancelled';
+        cancelBtn.remove();
+      });
+
       this.transferContent.appendChild(item);
     } else {
       item.querySelector('.transfer-name').textContent = filename;
@@ -318,6 +345,10 @@ export class UIManager {
     pText.textContent = `${Math.round(progress)}%`;
 
     if (progress >= 100) {
+      // Remove cancel button when done
+      const cancelBtn = item.querySelector('.btn-cancel-transfer');
+      if (cancelBtn) cancelBtn.remove();
+
       setTimeout(() => {
         if (item) {
           if (direction === 'send') {
@@ -331,7 +362,6 @@ export class UIManager {
     }
   }
 
-  // Called when ACK is received (sender confirmed delivery)
   markTransferComplete(peerId, filename, direction) {
     const transferId = `transfer-${direction}-${peerId}`;
     const item = document.getElementById(transferId);
@@ -343,7 +373,6 @@ export class UIManager {
         pFill.classList.add('done');
       }
     }
-    // Update peer card status
     this.setPeerStatus(peerId, 'Ready to receive');
   }
 
