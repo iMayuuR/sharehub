@@ -20,7 +20,11 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', peers: peers.size, uptime: process.uptime() });
+  const peerInfo = Array.from(peers.entries()).map(([id, p]) => ({
+    peerId: id.substring(0, 8) + '...',
+    rooms: Array.from(p.rooms)
+  }));
+  res.json({ status: 'ok', peers: peers.size, peerDetails: peerInfo, uptime: process.uptime() });
 });
 
 // Store connected peers: Map<string, { ws, rooms, peerId }>
