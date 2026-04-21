@@ -126,7 +126,16 @@ function init() {
     }
   };
 
-  signalingClient.connect();
+  // Discovery: Fetch Public IP for better grouping
+  fetch('https://api.ipify.org?format=json')
+    .then(res => res.json())
+    .then(data => {
+      signalingClient.connect(null, data.ip);
+    })
+    .catch(() => {
+      // Fallback to server-side only if fetch fails
+      signalingClient.connect();
+    });
 
   // Auto-join room from URL (from QR code scan or shared link)
   const urlRoom = new URL(window.location.href).searchParams.get('room');

@@ -27,8 +27,8 @@ app.get('/health', (req, res) => {
 // Store connected peers: Map<string, { ws, rooms, peerId }>
 const peers = new Map();
 
-function getRoomForIp(req) {
-  let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+function getRoomForIp(req, clientIp) {
+  let ip = clientIp || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
   if (ip.includes(',')) ip = ip.split(',')[0].trim();
 
   // Normalize IPv4-mapped IPv6
@@ -51,6 +51,7 @@ wss.on('connection', (ws, req) => {
   const urlParams = new URLSearchParams(req.url.split('?')[1]);
   const peerId = urlParams.get('peerId');
   const explicitRoomId = urlParams.get('roomId');
+  const clientIp = urlParams.get('clientIp');
 
   if (!peerId) {
     ws.close(1008, 'Peer ID is required');
@@ -59,7 +60,7 @@ wss.on('connection', (ws, req) => {
 
   // A peer belongs to multiple rooms simultaneously
   const rooms = new Set();
-  rooms.add(getRoomForIp(req));
+  rooms.add(getRoomForIp(req, clientIp));
   rooms.add(peerId);
   if (explicitRoomId) rooms.add(explicitRoomId.toUpperCase().trim());
 

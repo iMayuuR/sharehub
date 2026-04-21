@@ -1,101 +1,81 @@
 // ui.js
-
-function generateRoomCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I/O/0/1 to avoid confusion
-  let code = '';
-  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return code;
-}
-
 export class UIManager {
-  constructor(onPeerClick) {
+  constructor(onPeerClick, onJoinRoom) {
+    this.onPeerClick = onPeerClick;
+    this.onJoinRoom = onJoinRoom;
+    
+    // UI Elements
     this.peersContainer = document.getElementById('peersContainer');
     this.emptyState = document.getElementById('emptyState');
-
-    this.myProfileBtn = document.getElementById('myProfileBtn');
-    this.myName = document.getElementById('myName');
-    this.myAvatar = document.getElementById('myAvatar');
-
-    this.profileModal = document.getElementById('profileModal');
+    this.pairModal = document.getElementById('pairModal');
+    this.openPairBtns = document.querySelectorAll('#openPairBtn, #landingOpenPairBtn');
+    this.closePairBtn = document.getElementById('closePairBtn');
+    this.myRoomCode = document.getElementById('myRoomCode');
+    this.qrCodeContainer = document.getElementById('qrCodeContainer');
+    this.copyRoomCodeBtn = document.getElementById('copyRoomCodeBtn');
+    this.joinRoomInput = document.getElementById('joinRoomInput');
+    this.joinRoomBtn = document.getElementById('joinRoomBtn');
+    
+    this.myName = document.getElementById('myNameDisplay');
+    this.myAvatar = document.getElementById('myAvatarDisplay');
+    this.editProfileBtn = document.getElementById('editProfileBtn');
+    this.editProfileModal = document.getElementById('editProfileModal');
+    this.closeEditBtn = document.getElementById('closeEditBtn');
+    this.saveProfileBtn = document.getElementById('saveProfileBtn');
     this.editNameInput = document.getElementById('editNameInput');
     this.editAvatarPreview = document.getElementById('editAvatarPreview');
-    this.saveProfileBtn = document.getElementById('saveProfileBtn');
-    this.closeProfileBtn = document.getElementById('closeProfileBtn');
-    this.randomizeAvatarBtn = document.getElementById('randomizeAvatarBtn');
+    this.avatarOptions = document.querySelectorAll('.avatar-option');
+    this.fileInput = document.getElementById('fileInput');
 
     this.transferSheet = document.getElementById('transferSheet');
     this.transferContent = document.getElementById('transferContent');
     this.transferStatus = document.getElementById('transferStatus');
     this.transferTitle = document.getElementById('transferTitle');
-    this.fileInput = document.getElementById('fileInput');
     this.clearTransfersBtn = document.getElementById('clearTransfersBtn');
-
-    this.mainReceiveBtn = document.getElementById('mainReceiveBtn');
-    this.pairModal = document.getElementById('pairModal');
-    this.closePairBtn = document.getElementById('closePairBtn');
-    this.qrCodeContainer = document.getElementById('qrCodeContainer');
-    this.myRoomCodeEl = document.getElementById('myRoomCode');
-    this.copyRoomCodeBtn = document.getElementById('copyRoomCodeBtn');
-    this.joinRoomInput = document.getElementById('joinRoomInput');
-    this.joinRoomBtn = document.getElementById('joinRoomBtn');
-
-    this.onPeerClick = onPeerClick;
-    this.onJoinRoom = null; // Set by main.js
-    this.activeTransfers = new Map();
-    this.roomCode = generateRoomCode();
-
-    this.setupEvents();
+    
+    this.toastContainer = document.getElementById('toastContainer');
+    
+    this.roomCode = null;
+    this.init();
   }
 
-  setupEvents() {
-    this.myProfileBtn.addEventListener('click', () => {
-      this.profileModal.classList.add('active');
-    });
-
-    this.closeProfileBtn.addEventListener('click', () => {
-      this.profileModal.classList.remove('active');
-    });
-
-    this.editNameInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); this.saveProfileBtn.click(); }
-      if (e.key === 'Escape') { e.preventDefault(); this.closeProfileBtn.click(); }
-    });
-
-    const setupOverlayClose = (modalOverlay, closeCallback) => {
-      if (!modalOverlay) return;
-      modalOverlay.addEventListener('click', (e) => {
-        if (e.target === modalOverlay) closeCallback();
-      });
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && modalOverlay.classList.contains('active')) {
-          closeCallback();
-        }
-      });
+  init() {
+    // Open Pair Modal
+    const openPair = () => {
+      this.pairModal.style.display = 'flex';
+      this.pairModal.style.opacity = '0';
+      setTimeout(() => { this.pairModal.style.opacity = '1'; }, 10);
     };
+    this.openPairBtns.forEach(btn => btn.addEventListener('click', openPair));
 
-    setupOverlayClose(this.profileModal, () => this.closeProfileBtn.click());
-
-    // --- Pair Modal ---
+    // Close Pair Modal
     const closePair = () => {
-      this.pairModal.classList.remove('active');
+      this.pairModal.style.opacity = '0';
+      setTimeout(() => { this.pairModal.style.display = 'none'; }, 300);
     };
+    this.closePairBtn.addEventListener('click', closePair);
 
-    const showPairModal = () => {
-      // Generate QR with room code URL
-      const pairUrl = `${window.location.origin}/?room=${this.roomCode}`;
-      this.myRoomCodeEl.textContent = this.roomCode;
-      this.qrCodeContainer.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(pairUrl)}" alt="QR Code" style="display:block; border-radius: 8px;" />`;
-      this.pairModal.classList.add('active');
+    // Profile Edit
+    this.editProfileBtn.addEventListener('click', () => {
+      this.editProfileModal.style.display = 'flex';
+    });
+    this.closeEditBtn.addEventListener('click', () => {
+      this.editProfileModal.style.display = 'none';
+    });
+    this.saveProfileBtn.addEventListener('click', () => {
+      const newName = this.editNameInput.value.trim();
+      const newAvatar = this.editAvatarPreview.textContent;
+      if (newName) {
+        window.dispatchEvent(new CustomEvent('profileUpdate', { detail: { name: newName, avatar: newAvatar } }));
+        this.editProfileModal.style.display = 'none';
+      }
+    });
 
-      // Auto-join own room code so peers who enter it can find us
-      if (this.onJoinRoom) this.onJoinRoom(this.roomCode);
-    };
-
-    if (this.mainReceiveBtn) this.mainReceiveBtn.addEventListener('click', showPairModal);
-    if (this.closePairBtn) {
-      this.closePairBtn.addEventListener('click', closePair);
-      setupOverlayClose(this.pairModal, closePair);
-    }
+    this.avatarOptions.forEach(opt => {
+      opt.addEventListener('click', () => {
+        this.editAvatarPreview.textContent = opt.textContent;
+      });
+    });
 
     // Copy room code
     if (this.copyRoomCodeBtn) {
@@ -156,6 +136,19 @@ export class UIManager {
     this.editAvatarPreview.textContent = identity.avatar;
   }
 
+  showToast(message) {
+    if (!this.toastContainer) return;
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = message;
+    this.toastContainer.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(-20px)';
+      setTimeout(() => toast.remove(), 300);
+    }, 4000);
+  }
+
   addPeer(peerId, name = 'Unknown Device', avatar = '💻') {
     const existingCard = document.getElementById(`peer-${peerId}`);
     if (existingCard) {
@@ -179,6 +172,13 @@ export class UIManager {
       <button class="btn-send">Send File</button>
     `;
 
+    // Visual selection logic
+    card.addEventListener('click', (e) => {
+      if (e.target.classList.contains('btn-send')) return;
+      document.querySelectorAll('.peer-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+    });
+
     card.addEventListener('dragover', (e) => {
       e.preventDefault();
       card.classList.add('drag-over');
@@ -190,6 +190,7 @@ export class UIManager {
       e.preventDefault();
       card.classList.remove('drag-over');
       if (e.dataTransfer.files.length > 0 && this.onPeerClick) {
+        this.showToast(`Sending to ${name}...`);
         this.onPeerClick(peerId, e.dataTransfer.files[0]);
       }
     });
@@ -199,27 +200,18 @@ export class UIManager {
       // Check for pending shared files from OS
       if (window.pendingShareFiles && window.pendingShareFiles.length > 0) {
         window.pendingShareFiles.forEach(f => {
-          if (this.onPeerClick) this.onPeerClick(peerId, f);
+          if (this.onPeerClick) {
+            this.showToast(`Sending to ${name}...`);
+            this.onPeerClick(peerId, f);
+          }
         });
         window.pendingShareFiles = [];
-
-        // Reset empty state UI
-        this.emptyState.innerHTML = `
-          <div class="radar-animation">
-            <div class="radar-dot" style="top: 20%; left: 60%; animation-delay: 0.5s;"></div>
-            <div class="radar-dot" style="top: 70%; left: 30%; animation-delay: 1.2s;"></div>
-            <div class="radar-dot" style="top: 40%; left: 20%; animation-delay: 0.8s;"></div>
-          </div>
-          <p>Searching for nearby ShareHub devices on your Wi-Fi...</p>
-        `;
-        if (this.peersContainer.querySelectorAll('.peer-card:not(.empty-state)').length > 0) {
-          this.emptyState.style.display = 'none';
-        }
         return;
       }
 
       this.fileInput.onchange = (e) => {
         if (e.target.files.length > 0 && this.onPeerClick) {
+          this.showToast(`Sending to ${name}...`);
           this.onPeerClick(peerId, e.target.files[0]);
         }
       };
@@ -240,17 +232,17 @@ export class UIManager {
     }
   }
 
-  updateProgress(peerId, filename, progress, totalSize) {
+  updateProgress(peerId, filename, progress, totalSize, status = 'transferring') {
     this.showTransferSheet();
     this.transferTitle.textContent = "Transfers in Progress";
     if (this.clearTransfersBtn) this.clearTransfersBtn.style.display = 'block';
 
-    let item = document.getElementById(`transfer-${peerId}`);
+    let item = document.getElementById(`transfer-${peerId}-${filename}`); // Use filename in ID to support multiple files
     if (!item) {
       this.transferStatus.style.display = 'none';
       item = document.createElement('div');
       item.className = 'transfer-item';
-      item.id = `transfer-${peerId}`;
+      item.id = `transfer-${peerId}-${filename}`;
       item.innerHTML = `
         <div class="transfer-header">
           <span class="transfer-name">${filename}</span>
@@ -261,8 +253,10 @@ export class UIManager {
         </div>
       `;
       this.transferContent.appendChild(item);
-    } else {
-      item.querySelector('.transfer-name').textContent = filename;
+
+      if (status === 'receiving') {
+        this.showToast(`Receiving ${filename}...`);
+      }
     }
 
     const pFill = item.querySelector('.transfer-progress-fill');
@@ -271,12 +265,16 @@ export class UIManager {
     pFill.style.width = `${progress}%`;
     pText.textContent = `${Math.round(progress)}%`;
 
-    if (progress >= 100) {
+    if (status === 'completed' || progress >= 100) {
+      const waitTime = status === 'completed' ? 0 : 1000;
       setTimeout(() => {
         if (item) {
-          item.querySelector('.transfer-percent').textContent = 'Done!';
+          pText.innerHTML = '<span class="transfer-status-success">✅ Done</span>';
+          if (status === 'completed') {
+             this.showToast(`Successfully sent ${filename}!`);
+          }
         }
-      }, 500);
+      }, waitTime);
     }
   }
 
@@ -286,5 +284,31 @@ export class UIManager {
 
   hideTransferSheet() {
     this.transferSheet.classList.remove('open');
+  }
+
+  updatePairInfo(roomCode, qrUrl) {
+    this.roomCode = roomCode;
+    this.myRoomCode.textContent = roomCode;
+    
+    // Clear generating text
+    this.qrCodeContainer.innerHTML = '';
+    
+    // Generate QR using the global QRCode source in index.html or we can use a library
+    // If QRCode exists globally (e.g. from script tag)
+    if (window.QRCode) {
+      new QRCode(this.qrCodeContainer, {
+        text: qrUrl,
+        width: 180,
+        height: 180,
+        colorDark: "#ffffff",
+        colorLight: "#000000",
+        correctLevel: QRCode.CorrectLevel.H
+      });
+    } else {
+      // Fallback: use an image API if library not loaded
+      const qrImg = document.createElement('img');
+      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrUrl)}&bgcolor=0a0a0a&color=ffffff`;
+      this.qrCodeContainer.appendChild(qrImg);
+    }
   }
 }

@@ -37,7 +37,8 @@ export class WebRTCManager {
           username: 'openrelayproject',
           credential: 'openrelayproject'
         }
-      ]
+      ],
+      iceCandidatePoolSize: 10
     };
 
     const pc = new RTCPeerConnection(rtcConfig);
@@ -110,7 +111,7 @@ export class WebRTCManager {
           chunks: []
         });
         if (this.onProgress) {
-          this.onProgress(peerId, meta.name, 0, meta.size);
+          this.onProgress(peerId, meta.name, 0, meta.size, 'receiving');
         }
       } else if (meta.type === 'done') {
         const fileData = this.incomingFiles.get(peerId);
@@ -130,8 +131,19 @@ export class WebRTCManager {
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
         }, 100);
+
+        // Send ACK to sender
+        const channel = this.channels.get(peerId);
+        if (channel && channel.readyState === 'open') {
+          channel.send(JSON.stringify({ type: 'ack', name: fileData.meta.name }));
+        }
         
         if (this.onFileComplete) this.onFileComplete(peerId, fileData.meta.name);
+      } else if (meta.type === 'ack') {
+        // File received successfully by the other end
+        if (this.onProgress) {
+          this.onProgress(peerId, meta.name, 100, 0, 'completed');
+        }
       }
     } else {
       // Chunk of binary data
@@ -141,7 +153,7 @@ export class WebRTCManager {
         fileData.receivedSize += data.byteLength;
         const progress = Math.min((fileData.receivedSize / fileData.meta.size) * 100, 100);
         if (this.onProgress) {
-          this.onProgress(peerId, fileData.meta.name, progress, fileData.meta.size);
+          this.onProgress(peerId, fileData.meta.name, progress, fileData.meta.size, 'receiving');
         }
       }
     }
@@ -173,7 +185,7 @@ export class WebRTCManager {
     channel.send(JSON.stringify(header));
 
     // Initialize progress to 0 for sender
-    if (this.onProgress) this.onProgress(peerId, file.name, 0, file.size);
+    if (this.onProgress) this.onProgress(peerId, file.name, 0, file.size, 'sending');
 
     // Read and send chunks
     let offset = 0;
@@ -197,7 +209,7 @@ export class WebRTCManager {
          offset += e.target.result.byteLength;
          
          const progress = Math.min((offset / file.size) * 100, 100);
-         if (this.onProgress) this.onProgress(peerId, file.name, progress, file.size);
+         if (this.onProgress) this.onProgress(peerId, file.name, progress, file.size, 'sending');
          
          if (offset < file.size) {
             readSlice(offset);

@@ -15,7 +15,7 @@ export class SignalingClient {
     this._intentionalClose = false;
   }
 
-  connect(roomId) {
+  connect(roomId, clientIp) {
     // Clear any pending reconnect
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
@@ -23,7 +23,9 @@ export class SignalingClient {
     }
 
     const urlParams = new URL(window.location.href).searchParams;
-    this._roomId = roomId || urlParams.get('roomId') || urlParams.get('room');
+    this._roomId = roomId || this._roomId || urlParams.get('roomId') || urlParams.get('room');
+    const ip = clientIp || this._clientIp;
+    if (ip) this._clientIp = ip;
 
     // Build WebSocket URL
     const signalingBase = import.meta.env.VITE_SIGNALING_URL;
@@ -41,6 +43,7 @@ export class SignalingClient {
     }
 
     if (this._roomId) url += `&roomId=${this._roomId}`;
+    if (this._clientIp) url += `&clientIp=${this._clientIp}`;
 
     if (this.onConnectionChange) this.onConnectionChange('connecting');
 
