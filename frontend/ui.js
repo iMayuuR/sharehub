@@ -1,87 +1,100 @@
 // ui.js
+
+function generateRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
 export class UIManager {
-  constructor(onPeerClick, onJoinRoom) {
-    this.onPeerClick = onPeerClick;
-    this.onJoinRoom = onJoinRoom;
-    
-    // UI Elements
+  constructor(onPeerClick) {
     this.peersContainer = document.getElementById('peersContainer');
     this.emptyState = document.getElementById('emptyState');
-    this.pairModal = document.getElementById('pairModal');
-    this.openPairBtns = document.querySelectorAll('#openPairBtn, #landingOpenPairBtn');
-    this.closePairBtn = document.getElementById('closePairBtn');
-    this.myRoomCode = document.getElementById('myRoomCode');
-    this.qrCodeContainer = document.getElementById('qrCodeContainer');
-    this.copyRoomCodeBtn = document.getElementById('copyRoomCodeBtn');
-    this.joinRoomInput = document.getElementById('joinRoomInput');
-    this.joinRoomBtn = document.getElementById('joinRoomBtn');
-    
-    this.myName = document.getElementById('myNameDisplay');
-    this.myAvatar = document.getElementById('myAvatarDisplay');
-    this.editProfileBtn = document.getElementById('editProfileBtn');
+
+    this.myProfileBtn = document.getElementById('myProfileBtn');
+    this.myName = document.getElementById('myName');
+    this.myAvatar = document.getElementById('myAvatar');
+
     this.profileModal = document.getElementById('profileModal');
-    this.closeProfileBtn = document.getElementById('closeProfileBtn');
-    this.saveProfileBtn = document.getElementById('saveProfileBtn');
-    this.randomizeAvatarBtn = document.getElementById('randomizeAvatarBtn');
     this.editNameInput = document.getElementById('editNameInput');
     this.editAvatarPreview = document.getElementById('editAvatarPreview');
-    this.avatarOptions = document.querySelectorAll('.avatar-option');
-    this.fileInput = document.getElementById('fileInput');
+    this.saveProfileBtn = document.getElementById('saveProfileBtn');
+    this.closeProfileBtn = document.getElementById('closeProfileBtn');
+    this.randomizeAvatarBtn = document.getElementById('randomizeAvatarBtn');
 
     this.transferSheet = document.getElementById('transferSheet');
     this.transferContent = document.getElementById('transferContent');
     this.transferStatus = document.getElementById('transferStatus');
     this.transferTitle = document.getElementById('transferTitle');
+    this.fileInput = document.getElementById('fileInput');
     this.clearTransfersBtn = document.getElementById('clearTransfersBtn');
-    
-    this.toastContainer = document.getElementById('toastContainer');
-    
-    this.roomCode = null;
-    this.init();
+
+    this.mainReceiveBtn = document.getElementById('mainReceiveBtn');
+    this.pairModal = document.getElementById('pairModal');
+    this.closePairBtn = document.getElementById('closePairBtn');
+    this.qrCodeContainer = document.getElementById('qrCodeContainer');
+    this.myRoomCodeEl = document.getElementById('myRoomCode');
+    this.copyRoomCodeBtn = document.getElementById('copyRoomCodeBtn');
+    this.joinRoomInput = document.getElementById('joinRoomInput');
+    this.joinRoomBtn = document.getElementById('joinRoomBtn');
+
+    this.onPeerClick = onPeerClick;
+    this.onJoinRoom = null;
+    this.activeTransfers = new Map();
+    this.roomCode = generateRoomCode();
+    this.selectedPeerId = null;
+
+    this.setupEvents();
   }
 
-  init() {
-    // Open Pair Modal
-    const openPair = () => {
-      this.pairModal.style.display = 'flex';
-      this.pairModal.style.opacity = '0';
-      setTimeout(() => { this.pairModal.style.opacity = '1'; }, 10);
-    };
-    this.openPairBtns.forEach(btn => btn.addEventListener('click', openPair));
-
-    // Close Pair Modal
-    const closePair = () => {
-      this.pairModal.style.opacity = '0';
-      setTimeout(() => { this.pairModal.style.display = 'none'; }, 300);
-    };
-    this.closePairBtn.addEventListener('click', closePair);
-
-    // Profile Edit
-    this.editProfileBtn.addEventListener('click', () => {
-      this.profileModal.style.display = 'flex';
+  setupEvents() {
+    this.myProfileBtn.addEventListener('click', () => {
+      this.profileModal.classList.add('active');
     });
+
     this.closeProfileBtn.addEventListener('click', () => {
-      this.profileModal.style.display = 'none';
-    });
-    
-    this.saveProfileBtn.addEventListener('click', () => {
-      const newName = this.editNameInput.value.trim();
-      const newAvatar = this.editAvatarPreview.textContent;
-      if (newName) {
-        window.dispatchEvent(new CustomEvent('profileUpdate', { detail: { name: newName, avatar: newAvatar } }));
-        this.profileModal.style.display = 'none';
-      }
+      this.profileModal.classList.remove('active');
     });
 
-    if (this.avatarOptions.length > 0) {
-      this.avatarOptions.forEach(opt => {
-        opt.addEventListener('click', () => {
-          this.editAvatarPreview.textContent = opt.textContent;
-        });
+    this.editNameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); this.saveProfileBtn.click(); }
+      if (e.key === 'Escape') { e.preventDefault(); this.closeProfileBtn.click(); }
+    });
+
+    const setupOverlayClose = (modalOverlay, closeCallback) => {
+      if (!modalOverlay) return;
+      modalOverlay.addEventListener('click', (e) => {
+        if (e.target === modalOverlay) closeCallback();
       });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modalOverlay.classList.contains('active')) {
+          closeCallback();
+        }
+      });
+    };
+
+    setupOverlayClose(this.profileModal, () => this.closeProfileBtn.click());
+
+    // --- Pair Modal ---
+    const closePair = () => {
+      this.pairModal.classList.remove('active');
+    };
+
+    const showPairModal = () => {
+      const pairUrl = `${window.location.origin}/?room=${this.roomCode}`;
+      this.myRoomCodeEl.textContent = this.roomCode;
+      this.qrCodeContainer.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(pairUrl)}" alt="QR Code" style="display:block; border-radius: 8px;" />`;
+      this.pairModal.classList.add('active');
+      if (this.onJoinRoom) this.onJoinRoom(this.roomCode);
+    };
+
+    if (this.mainReceiveBtn) this.mainReceiveBtn.addEventListener('click', showPairModal);
+    if (this.closePairBtn) {
+      this.closePairBtn.addEventListener('click', closePair);
+      setupOverlayClose(this.pairModal, closePair);
     }
 
-    // Copy room code
     if (this.copyRoomCodeBtn) {
       this.copyRoomCodeBtn.addEventListener('click', () => {
         navigator.clipboard.writeText(this.roomCode).then(() => {
@@ -91,7 +104,6 @@ export class UIManager {
       });
     }
 
-    // Join room input
     if (this.joinRoomBtn) {
       const doJoin = () => {
         const code = this.joinRoomInput.value.toUpperCase().trim();
@@ -106,22 +118,18 @@ export class UIManager {
       });
     }
 
-    // Auto-uppercase input
     if (this.joinRoomInput) {
       this.joinRoomInput.addEventListener('input', () => {
         this.joinRoomInput.value = this.joinRoomInput.value.toUpperCase();
       });
     }
 
-    // Transfer sheet drag-to-dismiss
     const handleSheet = document.querySelector('.sheet-handle');
-    if (handleSheet) {
-      let startY = 0;
-      handleSheet.addEventListener('touchstart', e => { startY = e.touches[0].clientY; });
-      handleSheet.addEventListener('touchmove', e => {
-         if (e.touches[0].clientY - startY > 50) this.hideTransferSheet();
-      });
-    }
+    let startY = 0;
+    handleSheet.addEventListener('touchstart', e => { startY = e.touches[0].clientY; });
+    handleSheet.addEventListener('touchmove', e => {
+       if (e.touches[0].clientY - startY > 50) this.hideTransferSheet();
+    });
 
     if (this.clearTransfersBtn) {
       this.clearTransfersBtn.addEventListener('click', () => {
@@ -135,24 +143,46 @@ export class UIManager {
     }
   }
 
+  // --- Toast Notification ---
+  showToast(message, duration = 3000) {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'toast-container';
+      document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = message;
+    container.appendChild(toast);
+
+    // Trigger animation
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), 300);
+    }, duration);
+  }
+
+  // --- Peer Selection ---
+  selectPeer(peerId) {
+    // Remove previous selection
+    if (this.selectedPeerId) {
+      const prev = document.getElementById(`peer-${this.selectedPeerId}`);
+      if (prev) prev.classList.remove('selected');
+    }
+    this.selectedPeerId = peerId;
+    const card = document.getElementById(`peer-${peerId}`);
+    if (card) card.classList.add('selected');
+  }
+
   setIdentity(identity) {
     this.myName.textContent = identity.name;
     this.myAvatar.textContent = identity.avatar;
     this.editNameInput.value = identity.name;
     this.editAvatarPreview.textContent = identity.avatar;
-  }
-
-  showToast(message) {
-    if (!this.toastContainer) return;
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.textContent = message;
-    this.toastContainer.appendChild(toast);
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      toast.style.transform = 'translateY(-20px)';
-      setTimeout(() => toast.remove(), 300);
-    }, 4000);
   }
 
   addPeer(peerId, name = 'Unknown Device', avatar = '💻') {
@@ -173,16 +203,15 @@ export class UIManager {
       <div class="avatar">${avatar}</div>
       <div class="peer-info">
         <h3>${name}</h3>
-        <p>Ready to receive</p>
+        <p class="peer-status">Ready to receive</p>
       </div>
       <button class="btn-send">Send File</button>
     `;
 
-    // Visual selection logic
+    // Click card to select
     card.addEventListener('click', (e) => {
-      if (e.target.classList.contains('btn-send')) return;
-      document.querySelectorAll('.peer-card').forEach(c => c.classList.remove('selected'));
-      card.classList.add('selected');
+      if (e.target.closest('.btn-send')) return; // Don't select on button click
+      this.selectPeer(peerId);
     });
 
     card.addEventListener('dragover', (e) => {
@@ -196,28 +225,36 @@ export class UIManager {
       e.preventDefault();
       card.classList.remove('drag-over');
       if (e.dataTransfer.files.length > 0 && this.onPeerClick) {
-        this.showToast(`Sending to ${name}...`);
+        this.selectPeer(peerId);
         this.onPeerClick(peerId, e.dataTransfer.files[0]);
       }
     });
 
     const sendBtn = card.querySelector('.btn-send');
     sendBtn.addEventListener('click', () => {
-      // Check for pending shared files from OS
+      this.selectPeer(peerId);
+
       if (window.pendingShareFiles && window.pendingShareFiles.length > 0) {
         window.pendingShareFiles.forEach(f => {
-          if (this.onPeerClick) {
-            this.showToast(`Sending to ${name}...`);
-            this.onPeerClick(peerId, f);
-          }
+          if (this.onPeerClick) this.onPeerClick(peerId, f);
         });
         window.pendingShareFiles = [];
+        this.emptyState.innerHTML = `
+          <div class="radar-animation">
+            <div class="radar-dot" style="top: 20%; left: 60%; animation-delay: 0.5s;"></div>
+            <div class="radar-dot" style="top: 70%; left: 30%; animation-delay: 1.2s;"></div>
+            <div class="radar-dot" style="top: 40%; left: 20%; animation-delay: 0.8s;"></div>
+          </div>
+          <p>Searching for nearby ShareHub devices on your Wi-Fi...</p>
+        `;
+        if (this.peersContainer.querySelectorAll('.peer-card:not(.empty-state)').length > 0) {
+          this.emptyState.style.display = 'none';
+        }
         return;
       }
 
       this.fileInput.onchange = (e) => {
         if (e.target.files.length > 0 && this.onPeerClick) {
-          this.showToast(`Sending to ${name}...`);
           this.onPeerClick(peerId, e.target.files[0]);
         }
       };
@@ -229,41 +266,49 @@ export class UIManager {
 
   removePeer(peerId) {
     const card = document.getElementById(`peer-${peerId}`);
-    if (card) {
-      this.peersContainer.removeChild(card);
-    }
+    if (card) this.peersContainer.removeChild(card);
+    if (this.selectedPeerId === peerId) this.selectedPeerId = null;
 
     if (this.peersContainer.querySelectorAll('.peer-card:not(.empty-state)').length === 0) {
       this.emptyState.style.display = 'flex';
     }
   }
 
-  updateProgress(peerId, filename, progress, totalSize, status = 'transferring') {
+  // Update peer card status text
+  setPeerStatus(peerId, statusText) {
+    const card = document.getElementById(`peer-${peerId}`);
+    if (!card) return;
+    const statusEl = card.querySelector('.peer-status');
+    if (statusEl) statusEl.textContent = statusText;
+  }
+
+  updateProgress(peerId, filename, progress, totalSize, direction = 'send') {
     this.showTransferSheet();
     this.transferTitle.textContent = "Transfers in Progress";
     if (this.clearTransfersBtn) this.clearTransfersBtn.style.display = 'block';
 
-    let itemStr = `transfer-${peerId}-${filename}`.replace(/[^a-zA-Z0-9-]/g, '');
-    let item = document.getElementById(itemStr); 
+    const transferId = `transfer-${direction}-${peerId}`;
+    let item = document.getElementById(transferId);
+    const dirLabel = direction === 'send' ? '⬆ Sending' : '⬇ Receiving';
+
     if (!item) {
       this.transferStatus.style.display = 'none';
       item = document.createElement('div');
       item.className = 'transfer-item';
-      item.id = itemStr;
+      item.id = transferId;
       item.innerHTML = `
         <div class="transfer-header">
+          <span class="transfer-direction">${dirLabel}</span>
           <span class="transfer-name">${filename}</span>
           <span class="transfer-percent">0%</span>
         </div>
         <div class="transfer-progress-bar">
-          <div class="transfer-progress-fill"></div>
+          <div class="transfer-progress-fill ${direction === 'receive' ? 'receive' : ''}"></div>
         </div>
       `;
       this.transferContent.appendChild(item);
-
-      if (status === 'receiving') {
-        this.showToast(`Receiving ${filename}...`);
-      }
+    } else {
+      item.querySelector('.transfer-name').textContent = filename;
     }
 
     const pFill = item.querySelector('.transfer-progress-fill');
@@ -272,17 +317,34 @@ export class UIManager {
     pFill.style.width = `${progress}%`;
     pText.textContent = `${Math.round(progress)}%`;
 
-    if (status === 'completed' || progress >= 100) {
-      const waitTime = status === 'completed' ? 0 : 1000;
+    if (progress >= 100) {
       setTimeout(() => {
         if (item) {
-          pText.innerHTML = '<span class="transfer-status-success">✅ Done</span>';
-          if (status === 'completed') {
-             this.showToast(`Successfully sent ${filename}!`);
+          if (direction === 'send') {
+            pText.textContent = 'Waiting for ACK...';
+          } else {
+            pText.innerHTML = '✅ Received!';
+            pFill.classList.add('done');
           }
         }
-      }, waitTime);
+      }, 300);
     }
+  }
+
+  // Called when ACK is received (sender confirmed delivery)
+  markTransferComplete(peerId, filename, direction) {
+    const transferId = `transfer-${direction}-${peerId}`;
+    const item = document.getElementById(transferId);
+    if (item) {
+      const pText = item.querySelector('.transfer-percent');
+      const pFill = item.querySelector('.transfer-progress-fill');
+      if (direction === 'send') {
+        pText.innerHTML = '✅ Sent!';
+        pFill.classList.add('done');
+      }
+    }
+    // Update peer card status
+    this.setPeerStatus(peerId, 'Ready to receive');
   }
 
   showTransferSheet() {
@@ -291,18 +353,5 @@ export class UIManager {
 
   hideTransferSheet() {
     this.transferSheet.classList.remove('open');
-  }
-
-  updatePairInfo(roomCode, qrUrl) {
-    this.roomCode = roomCode;
-    this.myRoomCode.textContent = roomCode;
-    
-    // Clear generating text
-    this.qrCodeContainer.innerHTML = '';
-    
-    // Fallback: use an image API if library not loaded
-    const qrImg = document.createElement('img');
-    qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrUrl)}&bgcolor=0a0a0a&color=ffffff`;
-    this.qrCodeContainer.appendChild(qrImg);
   }
 }

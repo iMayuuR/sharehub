@@ -15,7 +15,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Keepalive + health check
 app.get('/', (req, res) => {
   res.send('<h1>ShareHub Signaling Server is Running 🚀</h1>');
 });
@@ -27,21 +26,17 @@ app.get('/health', (req, res) => {
 // Store connected peers: Map<string, { ws, rooms, peerId }>
 const peers = new Map();
 
-function getRoomForIp(req, clientIp) {
-  let ip = clientIp || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+function getRoomForIp(req) {
+  let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
   if (ip.includes(',')) ip = ip.split(',')[0].trim();
-
-  // Normalize IPv4-mapped IPv6
   if (ip.startsWith('::ffff:')) ip = ip.replace('::ffff:', '');
 
-  // Group all local/private IPs into one room for LAN discovery
   if (ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
     return 'local-lan';
   }
   return `ip-${ip}`;
 }
 
-// Helper to check if two sets share at least one element
 function intersects(setA, setB) {
   for (const elem of setA) if (setB.has(elem)) return true;
   return false;
@@ -51,32 +46,42 @@ wss.on('connection', (ws, req) => {
   const urlParams = new URLSearchParams(req.url.split('?')[1]);
   const peerId = urlParams.get('peerId');
   const explicitRoomId = urlParams.get('roomId');
-  const clientIp = urlParams.get('clientIp');
+  const clientPublicIp = urlParams.get('publicIp'); // Client-reported public IP for discovery
 
   if (!peerId) {
     ws.close(1008, 'Peer ID is required');
     return;
   }
 
-  // A peer belongs to multiple rooms simultaneously
   const rooms = new Set();
-  rooms.add(getRoomForIp(req, clientIp));
+
+  // 1. Server-detected IP room (x-forwarded-for)
+  rooms.add(getRoomForIp(req));
+
+  // 2. Client-reported public IP room (from ipify API — more reliable across proxies)
+  if (clientPublicIp && clientPublicIp !== 'unknown') {
+    rooms.add(`ip-${clientPublicIp}`);
+  }
+
+  // 3. Own peerId as room (for direct targeting)
   rooms.add(peerId);
+
+  // 4. Explicit roomId from URL (QR scan / room code link)
   if (explicitRoomId) rooms.add(explicitRoomId.toUpperCase().trim());
 
   peers.set(peerId, { ws, rooms, peerId });
 
-  // Send connection confirmation with room info
+  // Send connection confirmation
   ws.send(JSON.stringify({ type: 'connected', peerId, rooms: Array.from(rooms) }));
 
-  // Send the newly joined peer the list of existing peers in shared rooms
+  // Send existing peers in shared rooms
   const peersInRoom = Array.from(peers.values())
     .filter(p => p.peerId !== peerId && intersects(p.rooms, rooms))
     .map(p => p.peerId);
 
   ws.send(JSON.stringify({ type: 'peers-list', peers: peersInRoom }));
 
-  // Broadcast to other peers in shared rooms that a new peer joined
+  // Broadcast new peer to others in shared rooms
   peers.forEach(p => {
     if (p.peerId !== peerId && intersects(p.rooms, rooms)) {
       p.ws.send(JSON.stringify({ type: 'peer-joined', peerId }));
@@ -87,12 +92,10 @@ wss.on('connection', (ws, req) => {
     try {
       const data = JSON.parse(message);
 
-      // Dynamic room joining
       if (data.type === 'join-room' && data.roomCode) {
         const roomCode = data.roomCode.toUpperCase().trim();
         rooms.add(roomCode);
 
-        // Exchange discovery with peers already in this room
         peers.forEach(p => {
           if (p.peerId !== peerId && p.rooms.has(roomCode)) {
             ws.send(JSON.stringify({ type: 'peer-joined', peerId: p.peerId }));
@@ -104,7 +107,6 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      // Relay signaling messages (SDP/ICE)
       if (data.type === 'signal') {
         const target = peers.get(data.to);
         if (target && target.ws.readyState === 1) {
@@ -112,7 +114,6 @@ wss.on('connection', (ws, req) => {
         }
       }
 
-      // Relay fallback for file data when WebRTC fails
       if (data.type === 'relay') {
         const target = peers.get(data.to);
         if (target && target.ws.readyState === 1) {

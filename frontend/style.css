@@ -580,49 +580,80 @@ body {
   100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
 }
 
-/* Peer Selection */
+/* --- Peer Selected State --- */
 .peer-card.selected {
   border-color: #ffffff;
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: 0 0 20px rgba(255, 255, 255, 0.15);
-}
-.peer-card.selected .peer-avatar-container {
-  border-color: #ffffff;
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.3), 0 4px 20px rgba(255, 255, 255, 0.1);
+  background: #111111;
 }
 
-/* Toast Notifications */
-.toast-container {
+.peer-card.selected .avatar {
+  box-shadow: 0 0 0 3px #ffffff, 0 0 15px rgba(255, 255, 255, 0.2);
+}
+
+/* --- Toast Notifications --- */
+#toast-container {
   position: fixed;
-  bottom: 100px;
+  top: 20px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 9999;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   pointer-events: none;
-}
-.toast {
-  background: var(--bg-panel);
-  border: 1px solid var(--glass-border);
-  color: white;
-  padding: 12px 24px;
-  border-radius: 50px;
-  font-size: 14px;
-  font-weight: 500;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-  animation: toast-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-  opacity: 0;
-  transform: translateY(20px);
-}
-@keyframes toast-in {
-  to { opacity: 1; transform: translateY(0); }
+  width: 90%;
+  max-width: 400px;
 }
 
-/* Success Progress */
-.transfer-status-success {
-  color: #00ff6a;
-  font-weight: bold;
+.toast {
+  background: rgba(20, 20, 20, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  padding: 12px 20px;
+  border-radius: 14px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  font-family: var(--font-family);
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateY(-20px) scale(0.9);
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  width: 100%;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+/* --- Transfer Direction Labels --- */
+.transfer-direction {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+/* Progress bar colors by direction */
+.transfer-progress-fill.receive {
+  background: #00ff6a;
+}
+
+.transfer-progress-fill.done {
+  background: #00ff6a;
+}
+
+/* Peer status text */
+.peer-status {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  transition: color 0.2s;
 }
 

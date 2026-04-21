@@ -1,4 +1,16 @@
 // signaling.js
+
+// Fetch public IP from ipify (free, no key needed)
+async function getPublicIp() {
+  try {
+    const res = await fetch('https://api.ipify.org?format=json');
+    const data = await res.json();
+    return data.ip;
+  } catch {
+    return 'unknown';
+  }
+}
+
 export class SignalingClient {
   constructor(peerId, onPeerJoined, onPeerLeft, onPeersList, onSignal, onRelay) {
     this.peerId = peerId;
@@ -8,48 +20,48 @@ export class SignalingClient {
     this.onSignal = onSignal;
     this.onRelay = onRelay;
     this.onRoomJoined = null;
-    this.onConnectionChange = null; // UI status feedback
+    this.onConnectionChange = null;
     this.ws = null;
     this._roomId = null;
     this._reconnectTimer = null;
     this._intentionalClose = false;
+    this._publicIp = 'unknown';
   }
 
-  connect(roomId, clientIp) {
-    // Clear any pending reconnect
+  async connect(roomId) {
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
 
     const urlParams = new URL(window.location.href).searchParams;
-    this._roomId = roomId || this._roomId || urlParams.get('roomId') || urlParams.get('room');
-    const ip = clientIp || this._clientIp;
-    if (ip) this._clientIp = ip;
+    this._roomId = roomId || urlParams.get('roomId') || urlParams.get('room');
+
+    // Fetch public IP for same-network discovery (runs once, cached)
+    if (this._publicIp === 'unknown') {
+      this._publicIp = await getPublicIp();
+    }
 
     // Build WebSocket URL
     const signalingBase = import.meta.env.VITE_SIGNALING_URL;
     let url;
 
     if (signalingBase) {
-      // Production — convert https:// to wss://
       const base = signalingBase.replace(/^http/, 'ws');
-      url = `${base}?peerId=${this.peerId}`;
+      url = `${base}?peerId=${this.peerId}&publicIp=${this._publicIp}`;
     } else {
-      // Local development
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
-      url = `${protocol}//${host}:3000?peerId=${this.peerId}`;
+      url = `${protocol}//${host}:3000?peerId=${this.peerId}&publicIp=${this._publicIp}`;
     }
 
     if (this._roomId) url += `&roomId=${this._roomId}`;
-    if (this._clientIp) url += `&clientIp=${this._clientIp}`;
 
     if (this.onConnectionChange) this.onConnectionChange('connecting');
 
     try {
       this.ws = new WebSocket(url);
-    } catch (e) {
+    } catch {
       if (this.onConnectionChange) this.onConnectionChange('error');
       this._scheduleReconnect();
       return;
@@ -63,9 +75,7 @@ export class SignalingClient {
       try {
         const data = JSON.parse(event.data);
         switch (data.type) {
-          case 'connected':
-            // Server confirmed our connection
-            break;
+          case 'connected': break;
           case 'peers-list':
             if (this.onPeersList) this.onPeersList(data.peers);
             break;
@@ -96,9 +106,7 @@ export class SignalingClient {
 
     this.ws.onclose = () => {
       if (this.onConnectionChange) this.onConnectionChange('disconnected');
-      if (!this._intentionalClose) {
-        this._scheduleReconnect();
-      }
+      if (!this._intentionalClose) this._scheduleReconnect();
     };
   }
 
