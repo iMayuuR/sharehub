@@ -16,6 +16,10 @@ app.use((req, res, next) => {
 });
 
 // Keepalive + health check
+app.get('/', (req, res) => {
+  res.send('<h1>ShareHub Signaling Server is Running 🚀</h1>');
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', peers: peers.size, uptime: process.uptime() });
 });
