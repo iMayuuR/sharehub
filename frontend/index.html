@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/sharehub-logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#aa00ff" />
+    <link rel="manifest" href="/manifest.json">
+    <title>ShareHub - Fast P2P Transfer</title>
+    <!-- Modern Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+      #app-splash {
+        position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        background-color: #0a0a0f; z-index: 999999; transition: opacity 0.4s;
+      }
+      .spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1); border-top-color: #ffffff; border-radius: 50%; animation: spin 1s linear infinite; margin-top: 16px; }
+      @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+    <style id="fouc-shield">
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { background-color: #0a0a0f !important; color: #ffffff !important; margin: 0; font-family: sans-serif; }
+      body > *:not(#app-splash):not(script):not(style) { opacity: 0 !important; visibility: hidden !important; transition: opacity 0.3s; }
+    </style>
+    <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+    <!-- FOUC Prevention Splash -->
+    <div id="app-splash">
+      <h1 style="margin:0; letter-spacing: 2px; text-transform: uppercase;">ShareHub</h1>
+      <div class="spinner"></div>
+    </div>
+    <!-- Background animated shapes -->
+    <div class="bg-shape shape-1"></div>
+    <div class="bg-shape shape-2"></div>
+    <div class="bg-shape shape-3"></div>
+
+    <div class="app-container">
+      <header class="app-header glass-panel">
+        <div class="logo">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3" fill="rgba(255,255,255,0.1)"></circle>
+            <circle cx="6" cy="12" r="3" fill="rgba(255,255,255,0.1)"></circle>
+            <circle cx="18" cy="19" r="3" fill="rgba(255,255,255,0.1)"></circle>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" stroke="#777"></line>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" stroke="#777"></line>
+          </svg>
+          <h1 style="color: #fff; letter-spacing: 2px; text-transform: uppercase;">ShareHub</h1>
+        </div>
+        
+        <div class="my-profile cursor-pointer" id="myProfileBtn" title="Edit Profile">
+          <div class="avatar" id="myAvatar">😎</div>
+          <div class="user-details">
+            <span class="user-name" id="myName">Loading...</span>
+            <span class="badge">You</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="main-content">
+        <section class="discovery-section">
+          <h2 class="section-title" style="letter-spacing: -0.5px; font-weight: 800; display: flex; align-items: center;">ShareHub Radar <span style="display:inline-block; margin-left:10px; width:10px; height:10px; border-radius:50%; background:#ffffff; box-shadow: 0 0 8px rgba(255,255,255,0.6); animation: pulse-dot 2s infinite;"></span></h2>
+          <p class="section-subtitle">Scanning your local network for active devices. Select a peer below to securely beam files at lightning speed.</p>
+          
+          <div style="margin-bottom: var(--spacing-md);">
+            <button id="mainReceiveBtn" class="btn btn-outline" style="border-color: rgba(255,255,255,0.2); width: 100%; border-style: dashed;"><span style="margin-right: 8px;">📱</span> Manual Pair / Scan QR</button>
+          </div>
+          
+          <div id="peersContainer" class="peers-grid">
+            <!-- Peer cards will be injected here -->
+            <div class="peer-card empty-state" id="emptyState">
+              <div class="radar-animation">
+                <div class="radar-dot" style="top: 20%; left: 60%; animation-delay: 0.5s;"></div>
+                <div class="radar-dot" style="top: 70%; left: 30%; animation-delay: 1.2s;"></div>
+                <div class="radar-dot" style="top: 40%; left: 20%; animation-delay: 0.8s;"></div>
+              </div>
+              <p>Searching for nearby ShareHub devices on your Wi-Fi...</p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Dynamic Semantic Footer - Seamless Blended Design with Faded Divider -->
+      <footer style="text-align: center; padding: 25px 10px; font-size: 0.85rem; color: #ffffff; margin-top: auto; width: 100%; background: transparent; position: relative;">
+        <!-- Subtle Faded Divider Line -->
+        <div style="position: absolute; top: 0; left: 10%; width: 80%; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);"></div>
+        <p style="margin-bottom: 10px; font-weight: 500; opacity: 1; letter-spacing: 0.5px;">&copy; <span id="currentYear">2026</span> <span style="font-weight: 800; color: var(--neon-cyan);">SHAREHUB</span>. Made in ❤️ with <span style="font-weight: 800; color: #fff;">Antigravity</span></p>
+        <p style="margin-bottom: 15px; opacity: 0.8;">Developed by <span style="color: #fff; font-weight: 600; text-shadow: 0 0 10px rgba(255,255,255,0.2);">Mayur Patil</span></p>
+        <a href="https://github.com/iMayuuR/sharehub" target="_blank" rel="noopener noreferrer" style="color: #fff; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border: 1px solid rgba(255,255,255,0.2); border-radius: 30px; background: rgba(255,255,255,0.05); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.3);" onmouseover="this.style.background='rgba(255,255,255,0.15)'; this.style.borderColor='rgba(255,255,255,0.5)'; this.style.transform='translateY(-2px)';" onmouseout="this.style.background='rgba(255,255,255,0.05)'; this.style.borderColor='rgba(255,255,255,0.2)'; this.style.transform='translateY(0)';" onclick="window.open(this.href); return false;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          View GitHub Repository
+        </a>
+        <script>document.getElementById('currentYear').textContent = new Date().getFullYear();</script>
+      </footer>
+    </div>
+
+    <!-- Bottom Sheet / Modal for Active Transfers and Actions -->
+    <div class="bottom-sheet" id="transferSheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-content glass-panel" id="transferContent">
+        <!-- Transfer progress will go here -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-sm);">
+          <h3 id="transferTitle" style="margin-bottom: 0;">Ready to Transfer</h3>
+          <button id="clearTransfersBtn" class="btn btn-text" style="padding: var(--spacing-xs); display: none;">Clear</button>
+        </div>
+        <div class="transfer-status" id="transferStatus">No active transfers.</div>
+        
+        <!-- Hidden file input -->
+        <input type="file" id="fileInput" multiple style="display: none;" />
+      </div>
+    </div>
+
+    <!-- Edit Profile Modal -->
+    <div class="modal-overlay" id="profileModal">
+      <div class="modal glass-panel">
+        <h3>Edit Profile</h3>
+        <div class="avatar-selector">
+          <div class="avatar large-avatar" id="editAvatarPreview">😎</div>
+          <button id="randomizeAvatarBtn" class="btn btn-secondary">🎲 Randomize</button>
+        </div>
+        <div class="input-group">
+          <label for="editNameInput">Device Name</label>
+          <input type="text" id="editNameInput" placeholder="Neon Tiger">
+        </div>
+        <div class="modal-actions">
+          <button id="saveProfileBtn" class="btn btn-primary">Save</button>
+          <button id="closeProfileBtn" class="btn btn-text">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- QR Code Modal -->
+    <div class="modal-overlay" id="qrModal">
+      <div class="modal glass-panel">
+        <h3>Receive Files</h3>
+        <p style="text-align: center; color: var(--text-secondary);">Ask sender to scan this QR code or connect via relay.</p>
+        <div id="qrCodeContainer" style="text-align: center; margin: 0 auto; width: fit-content; min-height: 200px; display: flex; align-items: center; justify-content: center;">
+           <span style="color: var(--text-secondary);">Generating...</span>
+        </div>
+        <div class="modal-actions">
+          <button id="closeQrBtn" class="btn btn-primary">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PWA Install Floating Bubble -->
+    <div id="pwaInstallBubble" class="glass-panel" style="display: none; position: fixed; bottom: 30px; right: 30px; z-index: 1000; padding: 12px 18px; border-radius: 30px; align-items: center; gap: 12px; cursor: pointer; box-shadow: 0 10px 30px rgba(170,0,255,0.2); border: 2px solid rgba(170,0,255,0.4); animation: floatBubble 3s ease-in-out infinite; transition: all 0.3s ease;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+      <div style="display: flex; flex-direction: column;">
+        <span style="font-weight: bold; font-size: 0.95rem; color: #fff;">Install App</span>
+        <span id="pwaBubbleSubtext" style="font-size: 0.75rem; color: rgba(255,255,255,0.7);">Fast & Native</span>
+      </div>
+      <button id="pwaDismissBubble" style="background: transparent; border: none; color: rgba(255,255,255,0.4); font-size: 1.2rem; cursor: pointer; padding: 0 4px; margin-left: 4px;" title="Dismiss">&times;</button>
+    </div>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
