@@ -96,6 +96,26 @@ function init() {
     signalingClient.joinRoom(roomCode);
   };
 
+  // Connection status feedback on radar dot
+  const radarDot = document.querySelector('.section-title span');
+  const subtitle = document.querySelector('.section-subtitle');
+  signalingClient.onConnectionChange = (state) => {
+    if (!radarDot) return;
+    if (state === 'connected') {
+      radarDot.style.background = '#00ff6a';
+      radarDot.style.boxShadow = '0 0 8px rgba(0,255,106,0.6)';
+      if (subtitle) subtitle.textContent = 'Connected to server. Devices on your network appear automatically. Use a Room Code to connect across any network.';
+    } else if (state === 'connecting') {
+      radarDot.style.background = '#ffaa00';
+      radarDot.style.boxShadow = '0 0 8px rgba(255,170,0,0.6)';
+      if (subtitle) subtitle.textContent = 'Connecting to server...';
+    } else {
+      radarDot.style.background = '#ff3333';
+      radarDot.style.boxShadow = '0 0 8px rgba(255,51,51,0.6)';
+      if (subtitle) subtitle.textContent = 'Connection lost. Retrying...';
+    }
+  };
+
   signalingClient.onRoomJoined = (roomCode) => {
     // Clean up URL if it had ?room= param
     const url = new URL(window.location.href);

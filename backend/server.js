@@ -6,8 +6,19 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Keepalive endpoint — pinged by frontend to prevent Render free tier sleep
-app.get('/health', (req, res) => res.status(200).send('ok'));
+// CORS — allow the Vercel frontend to hit HTTP endpoints
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// Keepalive + health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', peers: peers.size, uptime: process.uptime() });
+});
 
 // Store connected peers: Map<string, { ws, rooms, peerId }>
 const peers = new Map();
@@ -20,10 +31,10 @@ function getRoomForIp(req) {
   if (ip.startsWith('::ffff:')) ip = ip.replace('::ffff:', '');
 
   // Group all local/private IPs into one room for LAN discovery
-  if (ip === '127.0.0.1' || ip === '::1' || ip.includes('127.0.0.1') || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
+  if (ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
     return 'local-lan';
   }
-  return ip;
+  return `ip-${ip}`;
 }
 
 // Helper to check if two sets share at least one element
@@ -42,16 +53,16 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
-  // A peer belongs to multiple rooms simultaneously:
-  // 1. IP-based room (auto-discovery for same public IP / LAN)
-  // 2. Their own peerId (so others can target them directly)
-  // 3. Any explicit roomId from URL (QR scan or room code link)
+  // A peer belongs to multiple rooms simultaneously
   const rooms = new Set();
   rooms.add(getRoomForIp(req));
   rooms.add(peerId);
-  if (explicitRoomId) rooms.add(explicitRoomId);
+  if (explicitRoomId) rooms.add(explicitRoomId.toUpperCase().trim());
 
   peers.set(peerId, { ws, rooms, peerId });
+
+  // Send connection confirmation with room info
+  ws.send(JSON.stringify({ type: 'connected', peerId, rooms: Array.from(rooms) }));
 
   // Send the newly joined peer the list of existing peers in shared rooms
   const peersInRoom = Array.from(peers.values())
@@ -71,17 +82,15 @@ wss.on('connection', (ws, req) => {
     try {
       const data = JSON.parse(message);
 
-      // Dynamic room joining — peer sends a room code to join after initial connection
+      // Dynamic room joining
       if (data.type === 'join-room' && data.roomCode) {
         const roomCode = data.roomCode.toUpperCase().trim();
         rooms.add(roomCode);
 
-        // Find peers already in this room and exchange discovery
+        // Exchange discovery with peers already in this room
         peers.forEach(p => {
           if (p.peerId !== peerId && p.rooms.has(roomCode)) {
-            // Tell the joiner about existing peer
             ws.send(JSON.stringify({ type: 'peer-joined', peerId: p.peerId }));
-            // Tell existing peer about the joiner
             p.ws.send(JSON.stringify({ type: 'peer-joined', peerId }));
           }
         });
@@ -90,7 +99,7 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      // Relay signaling messages (SDP/ICE) to a specific target peer
+      // Relay signaling messages (SDP/ICE)
       if (data.type === 'signal') {
         const target = peers.get(data.to);
         if (target && target.ws.readyState === 1) {
@@ -120,6 +129,14 @@ wss.on('connection', (ws, req) => {
       }
     });
   });
+
+  // Prevent connection timeout on Render
+  const keepAlive = setInterval(() => {
+    if (ws.readyState === 1) ws.ping();
+    else clearInterval(keepAlive);
+  }, 30000);
+
+  ws.on('close', () => clearInterval(keepAlive));
 });
 
 const PORT = process.env.PORT || 3000;

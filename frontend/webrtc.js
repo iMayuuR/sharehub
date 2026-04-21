@@ -16,9 +16,28 @@ export class WebRTCManager {
   createConnection(peerId, isInitiator) {
     if (this.connections.has(peerId)) return this.connections.get(peerId);
 
-    // Using Google's public STUN server
+    // ICE servers for NAT traversal: STUN for discovery + TURN for fallback relay
     const rtcConfig = {
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ]
     };
 
     const pc = new RTCPeerConnection(rtcConfig);
