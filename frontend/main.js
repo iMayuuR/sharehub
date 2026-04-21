@@ -263,7 +263,25 @@ function init() {
 window.pendingShareFiles = [];
 
 function checkPendingOSFiles() {
-  // Check URL for ?shared=true
+  // Handle case when SW wasn't installed yet (first-time gallery share)
+  if (window.location.search.includes('shared=pending')) {
+    window.history.replaceState({}, document.title, '/');
+    // SW is now installing, tell user to try again
+    setTimeout(() => {
+      const emptyState = document.getElementById('emptyState');
+      if (emptyState) {
+        emptyState.innerHTML = `
+          <div class="avatar" style="font-size:3rem; margin-bottom: 10px; background: transparent; box-shadow: none;">🔄</div>
+          <p style="font-weight: bold; color: var(--neon-cyan)">Almost there!</p>
+          <p style="font-size: 0.9rem;">ShareHub is now installed. Please share the file again from your gallery.</p>
+        `;
+        emptyState.style.display = 'flex';
+      }
+    }, 500);
+    return;
+  }
+
+  // Check URL for ?shared=true (SW handled the POST)
   if (window.location.search.includes('shared=true')) {
     const request = indexedDB.open('ShareHubDB', 1);
     request.onsuccess = (ev) => {

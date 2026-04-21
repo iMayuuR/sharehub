@@ -4,6 +4,24 @@
 const CHUNK_SIZE = 256 * 1024;
 const RELAY_CHUNK_SIZE = 16 * 1024;
 
+// Extension recovery for files missing extensions (Android gallery)
+const MIME_TO_EXT = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif',
+  'image/webp': '.webp', 'image/heic': '.heic', 'image/svg+xml': '.svg',
+  'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
+  'video/x-matroska': '.mkv', 'video/3gpp': '.3gp',
+  'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a',
+  'application/pdf': '.pdf', 'application/zip': '.zip',
+  'text/plain': '.txt', 'text/csv': '.csv', 'application/json': '.json',
+};
+
+function ensureExtension(name, mimeType) {
+  if (!name) name = 'shared_file';
+  const lastDot = name.lastIndexOf('.');
+  if (lastDot > 0 && lastDot > name.length - 8) return name; // Already has extension
+  const ext = MIME_TO_EXT[mimeType] || '';
+  return ext ? name + ext : name;
+}
 export class WebRTCManager {
   constructor(signalingClient, onProgress, onFileComplete) {
     this.signalingClient = signalingClient;
@@ -153,10 +171,13 @@ export class WebRTCManager {
         const blob = new Blob(fileData.chunks, { type: fileData.meta.mimeType });
         this.incomingFiles.delete(peerId);
 
+        // Fix filename extension if missing
+        const downloadName = ensureExtension(fileData.meta.name, fileData.meta.mimeType);
+
         // Send ACK
         const channel = this.channels.get(peerId);
         if (channel && channel.readyState === 'open') {
-          channel.send(JSON.stringify({ type: 'ack', filename: fileData.meta.name }));
+          channel.send(JSON.stringify({ type: 'ack', filename: downloadName }));
         }
 
         // Trigger download
@@ -164,12 +185,12 @@ export class WebRTCManager {
         const a = document.createElement('a');
         a.style.display = 'none';
         a.href = url;
-        a.download = fileData.meta.name;
+        a.download = downloadName;
         document.body.appendChild(a);
         a.click();
         setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
 
-        if (this.onFileComplete) this.onFileComplete(peerId, fileData.meta.name, 'receive');
+        if (this.onFileComplete) this.onFileComplete(peerId, downloadName, 'receive');
 
       } else if (meta.type === 'ack') {
         if (this.onFileComplete) this.onFileComplete(peerId, meta.filename, 'send');
@@ -225,14 +246,15 @@ export class WebRTCManager {
     }
 
     // Track send state for cancel support
-    const sendState = { cancelled: false, filename: file.name };
+    const fileName = ensureExtension(file.name, file.type);
+    const sendState = { cancelled: false, filename: fileName };
     this.activeSends.set(peerId, sendState);
 
-    if (this.onTransferStart) this.onTransferStart(peerId, file.name, 'send');
+    if (this.onTransferStart) this.onTransferStart(peerId, fileName, 'send');
 
-    const header = { type: 'header', name: file.name, size: file.size, mimeType: file.type };
+    const header = { type: 'header', name: fileName, size: file.size, mimeType: file.type };
     channel.send(JSON.stringify(header));
-    if (this.onProgress) this.onProgress(peerId, file.name, 0, file.size, 'send');
+    if (this.onProgress) this.onProgress(peerId, fileName, 0, file.size, 'send');
 
     let offset = 0;
     const reader = new FileReader();
@@ -299,12 +321,13 @@ export class WebRTCManager {
   }
 
   sendFileRelay(peerId, file) {
-    const sendState = { cancelled: false, filename: file.name };
+    const fileName = ensureExtension(file.name, file.type);
+    const sendState = { cancelled: false, filename: fileName };
     this.activeSends.set(peerId, sendState);
 
-    if (this.onTransferStart) this.onTransferStart(peerId, file.name, 'send');
+    if (this.onTransferStart) this.onTransferStart(peerId, fileName, 'send');
 
-    const header = { type: 'header', name: file.name, size: file.size, mimeType: file.type };
+    const header = { type: 'header', name: fileName, size: file.size, mimeType: file.type };
     this.signalingClient.sendRelay(peerId, JSON.stringify(header));
     if (this.onProgress) this.onProgress(peerId, file.name, 0, file.size, 'send');
 
