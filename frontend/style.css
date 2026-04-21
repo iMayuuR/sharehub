@@ -386,8 +386,11 @@ body {
 .sheet-content {
   border-radius: var(--br-card) var(--br-card) 0 0;
   padding: var(--spacing-md) var(--spacing-lg);
+  padding-bottom: calc(var(--spacing-xl) + env(safe-area-inset-bottom, 16px));
   border-bottom: none;
   min-height: 200px;
+  max-height: 60vh;
+  overflow-y: auto;
 }
 .sheet-content h3 {
   margin-top: 0;
@@ -546,14 +549,22 @@ body {
 }
 .transfer-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 10px;
 }
 .transfer-name {
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.transfer-percent {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
 }
 .transfer-progress-bar {
   width: 100%;

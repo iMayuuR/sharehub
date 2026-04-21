@@ -6,7 +6,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// CORS — allow the Vercel frontend to hit HTTP endpoints
+// CORS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -16,29 +16,25 @@ app.use((req, res, next) => {
 });
 
 app.get('/', (req, res) => {
-  res.send('<h1>ShareHub Signaling Server is Running 🚀</h1>');
+  res.send('<h1>ShareHub Signaling Server 🚀</h1>');
 });
 
 app.get('/health', (req, res) => {
   const peerInfo = Array.from(peers.entries()).map(([id, p]) => ({
-    peerId: id.substring(0, 8) + '...',
-    rooms: Array.from(p.rooms)
+    peerId: id.substring(0, 12) + '...',
+    rooms: Array.from(p.rooms).filter(r => r !== id) // Hide peerId room for clarity
   }));
-  res.json({ status: 'ok', peers: peers.size, peerDetails: peerInfo, uptime: process.uptime() });
+  res.json({ status: 'ok', peers: peers.size, peerDetails: peerInfo, uptime: Math.floor(process.uptime()) });
 });
 
-// Store connected peers: Map<string, { ws, rooms, peerId }>
+// Store connected peers
 const peers = new Map();
 
-function getRoomForIp(req) {
+function getClientIp(req) {
   let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
   if (ip.includes(',')) ip = ip.split(',')[0].trim();
   if (ip.startsWith('::ffff:')) ip = ip.replace('::ffff:', '');
-
-  if (ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
-    return 'local-lan';
-  }
-  return `ip-${ip}`;
+  return ip;
 }
 
 function intersects(setA, setB) {
@@ -50,7 +46,7 @@ wss.on('connection', (ws, req) => {
   const urlParams = new URLSearchParams(req.url.split('?')[1]);
   const peerId = urlParams.get('peerId');
   const explicitRoomId = urlParams.get('roomId');
-  const clientPublicIp = urlParams.get('publicIp'); // Client-reported public IP for discovery
+  const clientPublicIp = urlParams.get('publicIp');
 
   if (!peerId) {
     ws.close(1008, 'Peer ID is required');
@@ -59,26 +55,29 @@ wss.on('connection', (ws, req) => {
 
   const rooms = new Set();
 
-  // 1. Server-detected IP room (x-forwarded-for)
-  rooms.add(getRoomForIp(req));
+  // 1. Server-detected IP room
+  const serverIp = getClientIp(req);
+  rooms.add(`ip-${serverIp}`);
 
-  // 2. Client-reported public IP room (from ipify API — more reliable across proxies)
-  if (clientPublicIp && clientPublicIp !== 'unknown') {
+  // 2. Client-reported public IP (from ipify — more reliable for same-network matching)
+  if (clientPublicIp && clientPublicIp !== 'unknown' && clientPublicIp !== 'null') {
     rooms.add(`ip-${clientPublicIp}`);
   }
 
-  // 3. Own peerId as room (for direct targeting)
+  // 3. Own peerId as room (for direct signaling)
   rooms.add(peerId);
 
-  // 4. Explicit roomId from URL (QR scan / room code link)
+  // 4. Explicit roomId
   if (explicitRoomId) rooms.add(explicitRoomId.toUpperCase().trim());
 
   peers.set(peerId, { ws, rooms, peerId });
 
-  // Send connection confirmation
-  ws.send(JSON.stringify({ type: 'connected', peerId, rooms: Array.from(rooms) }));
+  console.log(`[+] ${peerId.substring(0, 8)} connected | IP: ${serverIp} | clientIP: ${clientPublicIp} | rooms: ${Array.from(rooms).filter(r => r !== peerId).join(', ')}`);
 
-  // Send existing peers in shared rooms
+  // Send connection confirmation with rooms (so frontend can log)
+  ws.send(JSON.stringify({ type: 'connected', peerId, rooms: Array.from(rooms).filter(r => r !== peerId) }));
+
+  // Send existing peers that share any room
   const peersInRoom = Array.from(peers.values())
     .filter(p => p.peerId !== peerId && intersects(p.rooms, rooms))
     .map(p => p.peerId);
@@ -108,6 +107,7 @@ wss.on('connection', (ws, req) => {
         });
 
         ws.send(JSON.stringify({ type: 'room-joined', roomCode }));
+        console.log(`[R] ${peerId.substring(0, 8)} joined room: ${roomCode}`);
         return;
       }
 
@@ -125,14 +125,16 @@ wss.on('connection', (ws, req) => {
         }
       }
     } catch (e) {
-      console.error('Error parsing message:', e);
+      console.error('Message parse error:', e);
     }
   });
 
   ws.on('close', () => {
     const disconnectedRooms = peers.get(peerId)?.rooms || new Set();
     peers.delete(peerId);
+    console.log(`[-] ${peerId.substring(0, 8)} disconnected`);
 
+    // Immediately broadcast to all peers in shared rooms
     peers.forEach(p => {
       if (intersects(p.rooms, disconnectedRooms)) {
         p.ws.send(JSON.stringify({ type: 'peer-left', peerId }));
@@ -140,16 +142,16 @@ wss.on('connection', (ws, req) => {
     });
   });
 
-  // Prevent connection timeout on Render
+  // Prevent Render timeout
   const keepAlive = setInterval(() => {
     if (ws.readyState === 1) ws.ping();
     else clearInterval(keepAlive);
-  }, 30000);
+  }, 25000);
 
   ws.on('close', () => clearInterval(keepAlive));
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Signaling server running on port ${PORT}`);
+  console.log(`Signaling server on port ${PORT}`);
 });
