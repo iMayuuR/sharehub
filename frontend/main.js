@@ -91,7 +91,34 @@ function init() {
     }
   );
 
+  // Wire up Room Code joining
+  uiManager.onJoinRoom = (roomCode) => {
+    signalingClient.joinRoom(roomCode);
+  };
+
+  signalingClient.onRoomJoined = (roomCode) => {
+    // Clean up URL if it had ?room= param
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('room') || url.searchParams.has('roomId')) {
+      url.searchParams.delete('room');
+      url.searchParams.delete('roomId');
+      window.history.replaceState({}, document.title, url.pathname);
+    }
+  };
+
   signalingClient.connect();
+
+  // Auto-join room from URL (from QR code scan or shared link)
+  const urlRoom = new URL(window.location.href).searchParams.get('room');
+  if (urlRoom) {
+    // Wait for WebSocket to open, then join the room
+    const waitAndJoin = setInterval(() => {
+      if (signalingClient.ws && signalingClient.ws.readyState === WebSocket.OPEN) {
+        clearInterval(waitAndJoin);
+        signalingClient.joinRoom(urlRoom.toUpperCase().trim());
+      }
+    }, 200);
+  }
 
   // Register PWA Service Worker
   if ('serviceWorker' in navigator) {

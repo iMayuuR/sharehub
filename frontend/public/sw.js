@@ -1,5 +1,5 @@
 // sw.js
-const CACHE_NAME = 'sharehub-v1';
+const CACHE_NAME = 'sharehub-v2';
 const ASSETS = [
   '/',
   '/index.html',
@@ -8,21 +8,37 @@ const ASSETS = [
   '/manifest.json'
 ];
 
+// Activate immediately — don't wait for old tabs to close
 self.addEventListener('install', (e) => {
+  self.skipWaiting();
   e.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
   );
 });
 
+// Claim all open tabs immediately so fetch handler works on first load
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    Promise.all([
+      self.clients.claim(),
+      // Clean up old caches
+      caches.keys().then(keys => 
+        Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+      )
+    ])
+  );
+});
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  
+
+  // Handle PWA Share Target POST to /share
   if (e.request.method === 'POST' && url.pathname === '/share') {
     e.respondWith((async () => {
       try {
         const formData = await e.request.formData();
         const files = formData.getAll('files');
-        
+
         await new Promise((resolve, reject) => {
           const request = indexedDB.open('ShareHubDB', 1);
           request.onupgradeneeded = (ev) => {
@@ -50,9 +66,12 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  e.respondWith(
-    caches.match(e.request).then((response) => {
-      return response || fetch(e.request);
-    })
-  );
+  // Standard cache-first strategy for GET requests
+  if (e.request.method === 'GET') {
+    e.respondWith(
+      caches.match(e.request).then((response) => {
+        return response || fetch(e.request);
+      })
+    );
+  }
 });

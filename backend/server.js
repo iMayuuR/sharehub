@@ -6,106 +6,100 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Store connected peers: Map<string, WebSocket>
-// Since we want to support "Rooms" based on IP or specific ID, we'll store peers with extra metadata
-const peers = new Map(); 
+// Store connected peers: Map<string, { ws, rooms, peerId }>
+const peers = new Map();
 
 function getRoomForIp(req) {
   let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
   if (ip.includes(',')) ip = ip.split(',')[0].trim();
-  
+
   // Normalize IPv4-mapped IPv6
   if (ip.startsWith('::ffff:')) ip = ip.replace('::ffff:', '');
-  
-  // If it's a local network IP, standard web WebRTC will bridge them anyway,
-  // so group all local clients into one "local-lan" room for easiest discovery.
+
+  // Group all local/private IPs into one room for LAN discovery
   if (ip === '127.0.0.1' || ip === '::1' || ip.includes('127.0.0.1') || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
     return 'local-lan';
   }
   return ip;
 }
 
+// Helper to check if two sets share at least one element
+function intersects(setA, setB) {
+  for (const elem of setA) if (setB.has(elem)) return true;
+  return false;
+}
+
 wss.on('connection', (ws, req) => {
   const urlParams = new URLSearchParams(req.url.split('?')[1]);
   const peerId = urlParams.get('peerId');
   const explicitRoomId = urlParams.get('roomId');
-  
+
   if (!peerId) {
     ws.close(1008, 'Peer ID is required');
     return;
   }
 
-  // A peer can belong to multiple rooms simultaneously:
-  // 1. Their IP-based room (for auto-discovery on LAN or same IP)
-  // 2. Their own explicit peerId (so others can directly target them via QR)
-  // 3. Any explicit roomId passed in the URL
+  // A peer belongs to multiple rooms simultaneously:
+  // 1. IP-based room (auto-discovery for same public IP / LAN)
+  // 2. Their own peerId (so others can target them directly)
+  // 3. Any explicit roomId from URL (QR scan or room code link)
   const rooms = new Set();
   rooms.add(getRoomForIp(req));
   rooms.add(peerId);
   if (explicitRoomId) rooms.add(explicitRoomId);
 
-  // Store the peer
   peers.set(peerId, { ws, rooms, peerId });
 
-
-
-  // Helper to check if two sets intersect
-  const intersects = (setA, setB) => {
-    for (let elem of setA) if (setB.has(elem)) return true;
-    return false;
-  };
-
-  // Find other peers sharing at least one room
+  // Send the newly joined peer the list of existing peers in shared rooms
   const peersInRoom = Array.from(peers.values())
     .filter(p => p.peerId !== peerId && intersects(p.rooms, rooms))
     .map(p => p.peerId);
 
-  // Send the newly joined peer the list of existing peers
-  ws.send(JSON.stringify({
-    type: 'peers-list',
-    peers: peersInRoom
-  }));
+  ws.send(JSON.stringify({ type: 'peers-list', peers: peersInRoom }));
 
   // Broadcast to other peers in shared rooms that a new peer joined
   peers.forEach(p => {
     if (p.peerId !== peerId && intersects(p.rooms, rooms)) {
-      p.ws.send(JSON.stringify({
-        type: 'peer-joined',
-        peerId: peerId
-      }));
+      p.ws.send(JSON.stringify({ type: 'peer-joined', peerId }));
     }
   });
 
-  // Handle incoming messages
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
-      
-      // Relay signaling messages to the specific target peer
+
+      // Dynamic room joining — peer sends a room code to join after initial connection
+      if (data.type === 'join-room' && data.roomCode) {
+        const roomCode = data.roomCode.toUpperCase().trim();
+        rooms.add(roomCode);
+
+        // Find peers already in this room and exchange discovery
+        peers.forEach(p => {
+          if (p.peerId !== peerId && p.rooms.has(roomCode)) {
+            // Tell the joiner about existing peer
+            ws.send(JSON.stringify({ type: 'peer-joined', peerId: p.peerId }));
+            // Tell existing peer about the joiner
+            p.ws.send(JSON.stringify({ type: 'peer-joined', peerId }));
+          }
+        });
+
+        ws.send(JSON.stringify({ type: 'room-joined', roomCode }));
+        return;
+      }
+
+      // Relay signaling messages (SDP/ICE) to a specific target peer
       if (data.type === 'signal') {
-        const targetPeerId = data.to;
-        const targetPeer = peers.get(targetPeerId);
-        
-        if (targetPeer && targetPeer.ws.readyState === 1) { // 1 is OPEN
-          targetPeer.ws.send(JSON.stringify({
-            type: 'signal',
-            from: peerId,
-            signal: data.signal
-          }));
+        const target = peers.get(data.to);
+        if (target && target.ws.readyState === 1) {
+          target.ws.send(JSON.stringify({ type: 'signal', from: peerId, signal: data.signal }));
         }
       }
-      
-      // Handle Relay Fallback
+
+      // Relay fallback for file data when WebRTC fails
       if (data.type === 'relay') {
-        const targetPeerId = data.to;
-        const targetPeer = peers.get(targetPeerId);
-        
-        if (targetPeer && targetPeer.ws.readyState === 1) {
-          targetPeer.ws.send(JSON.stringify({
-            type: 'relay',
-            from: peerId,
-            payload: data.payload
-          }));
+        const target = peers.get(data.to);
+        if (target && target.ws.readyState === 1) {
+          target.ws.send(JSON.stringify({ type: 'relay', from: peerId, payload: data.payload }));
         }
       }
     } catch (e) {
@@ -114,16 +108,12 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    const disconnectedPeerRooms = peers.get(peerId)?.rooms || new Set();
+    const disconnectedRooms = peers.get(peerId)?.rooms || new Set();
     peers.delete(peerId);
-    
-    // Broadcast peer leave to anyone who shared a room
+
     peers.forEach(p => {
-      if (intersects(p.rooms, disconnectedPeerRooms)) {
-        p.ws.send(JSON.stringify({
-          type: 'peer-left',
-          peerId: peerId
-        }));
+      if (intersects(p.rooms, disconnectedRooms)) {
+        p.ws.send(JSON.stringify({ type: 'peer-left', peerId }));
       }
     });
   });

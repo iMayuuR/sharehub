@@ -4,6 +4,7 @@
   "installCommand": "npm install",
   "framework": "vite",
   "rewrites": [
+    { "source": "/share", "destination": "/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

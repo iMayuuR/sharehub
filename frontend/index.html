@@ -62,10 +62,10 @@
       <main class="main-content">
         <section class="discovery-section">
           <h2 class="section-title" style="letter-spacing: -0.5px; font-weight: 800; display: flex; align-items: center;">ShareHub Radar <span style="display:inline-block; margin-left:10px; width:10px; height:10px; border-radius:50%; background:#ffffff; box-shadow: 0 0 8px rgba(255,255,255,0.6); animation: pulse-dot 2s infinite;"></span></h2>
-          <p class="section-subtitle">Scanning your local network for active devices. Select a peer below to securely beam files at lightning speed.</p>
+          <p class="section-subtitle">Devices on your network appear automatically. Use a Room Code to connect across any network.</p>
           
           <div style="margin-bottom: var(--spacing-md);">
-            <button id="mainReceiveBtn" class="btn btn-outline" style="border-color: rgba(255,255,255,0.2); width: 100%; border-style: dashed;"><span style="margin-right: 8px;">📱</span> Manual Pair / Scan QR</button>
+            <button id="mainReceiveBtn" class="btn btn-outline" style="border-color: rgba(255,255,255,0.2); width: 100%; border-style: dashed;"><span style="margin-right: 8px;">🔗</span> Pair with Room Code</button>
           </div>
           
           <div id="peersContainer" class="peers-grid">
@@ -131,16 +131,41 @@
       </div>
     </div>
 
-    <!-- QR Code Modal -->
-    <div class="modal-overlay" id="qrModal">
+    <!-- Pair Modal — Room Code + QR -->
+    <div class="modal-overlay" id="pairModal">
       <div class="modal glass-panel">
-        <h3>Receive Files</h3>
-        <p style="text-align: center; color: var(--text-secondary);">Ask sender to scan this QR code or connect via relay.</p>
-        <div id="qrCodeContainer" style="text-align: center; margin: 0 auto; width: fit-content; min-height: 200px; display: flex; align-items: center; justify-content: center;">
-           <span style="color: var(--text-secondary);">Generating...</span>
+        <h3 style="text-align: center; margin-bottom: 4px;">Pair Devices</h3>
+        <p style="text-align: center; color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 20px;">Share the code below or scan the QR to connect instantly — works on any network.</p>
+        
+        <!-- Your Room Code -->
+        <div style="text-align: center; margin-bottom: 20px;">
+          <p style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 8px;">Your Room Code</p>
+          <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+            <span id="myRoomCode" style="font-size: 2rem; font-weight: 800; letter-spacing: 6px; color: #fff; font-family: monospace;">------</span>
+            <button id="copyRoomCodeBtn" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #fff; padding: 6px 10px; cursor: pointer; font-size: 0.8rem; transition: all 0.2s;" title="Copy code">📋</button>
+          </div>
         </div>
+
+        <!-- QR Code -->
+        <div id="qrCodeContainer" style="text-align: center; margin: 0 auto 20px; width: fit-content; min-height: 180px; display: flex; align-items: center; justify-content: center;">
+          <span style="color: var(--text-secondary);">Generating...</span>
+        </div>
+
+        <!-- Divider -->
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+          <div style="flex: 1; height: 1px; background: rgba(255,255,255,0.1);"></div>
+          <span style="color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px;">or join a room</span>
+          <div style="flex: 1; height: 1px; background: rgba(255,255,255,0.1);"></div>
+        </div>
+
+        <!-- Join Room Input -->
+        <div style="display: flex; gap: 8px; margin-bottom: 20px;">
+          <input type="text" id="joinRoomInput" placeholder="Enter code" maxlength="6" style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 12px 16px; color: #fff; font-size: 1.1rem; font-family: monospace; letter-spacing: 4px; text-align: center; text-transform: uppercase; outline: none;" />
+          <button id="joinRoomBtn" class="btn btn-primary" style="padding: 12px 20px; white-space: nowrap;">Join</button>
+        </div>
+
         <div class="modal-actions">
-          <button id="closeQrBtn" class="btn btn-primary">Done</button>
+          <button id="closePairBtn" class="btn btn-text" style="width: 100%;">Close</button>
         </div>
       </div>
     </div>

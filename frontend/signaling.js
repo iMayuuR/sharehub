@@ -7,12 +7,13 @@ export class SignalingClient {
     this.onPeersList = onPeersList;
     this.onSignal = onSignal;
     this.onRelay = onRelay;
+    this.onRoomJoined = null;
     this.ws = null;
   }
 
-  connect() {
+  connect(roomId) {
     const urlParams = new URL(window.location.href).searchParams;
-    const roomId = urlParams.get('roomId');
+    const urlRoomId = roomId || urlParams.get('roomId') || urlParams.get('room');
 
     // Production: use VITE_SIGNALING_URL env variable (set during Vercel build)
     // Local dev: auto-detect hostname on port 3000
@@ -20,18 +21,16 @@ export class SignalingClient {
     let url;
 
     if (signalingBase) {
-      // Production — Render backend (e.g., wss://sharehub-signaling.onrender.com)
       const base = signalingBase.replace(/^http/, 'ws');
       url = `${base}?peerId=${this.peerId}`;
     } else {
-      // Local development — same host, port 3000
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
       url = `${protocol}//${host}:3000?peerId=${this.peerId}`;
     }
 
-    if (roomId) url += `&roomId=${roomId}`;
-    
+    if (urlRoomId) url += `&roomId=${urlRoomId}`;
+
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {};
@@ -55,6 +54,9 @@ export class SignalingClient {
           case 'relay':
             if (this.onRelay) this.onRelay(data.from, data.payload);
             break;
+          case 'room-joined':
+            if (this.onRoomJoined) this.onRoomJoined(data.roomCode);
+            break;
         }
       } catch(e) {
         console.error('Error parsing signaling message', e);
@@ -63,27 +65,26 @@ export class SignalingClient {
 
     this.ws.onclose = () => {
       // Reconnect on disconnect
-      setTimeout(() => this.connect(), 3000); // Retry logic
+      setTimeout(() => this.connect(urlRoomId), 3000);
     };
+  }
+
+  // Join a room code dynamically (without reconnecting)
+  joinRoom(roomCode) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'join-room', roomCode }));
+    }
   }
 
   sendSignal(toId, signalData) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({
-        type: 'signal',
-        to: toId,
-        signal: signalData
-      }));
+      this.ws.send(JSON.stringify({ type: 'signal', to: toId, signal: signalData }));
     }
   }
 
   sendRelay(toId, payload) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({
-        type: 'relay',
-        to: toId,
-        payload: payload
-      }));
+      this.ws.send(JSON.stringify({ type: 'relay', to: toId, payload }));
     }
   }
 }
