@@ -1,6 +1,5 @@
 // webrtc.js
 
-// Adaptive chunk size: 256KB for max speed on local connections
 const CHUNK_SIZE = 256 * 1024;
 const RELAY_CHUNK_SIZE = 16 * 1024;
 
@@ -18,30 +17,38 @@ const MIME_TO_EXT = {
 function ensureExtension(name, mimeType) {
   if (!name) name = 'shared_file';
   const lastDot = name.lastIndexOf('.');
-  if (lastDot > 0 && lastDot > name.length - 8) return name; // Already has extension
+  if (lastDot > 0 && lastDot > name.length - 8) return name;
   const ext = MIME_TO_EXT[mimeType] || '';
   return ext ? name + ext : name;
 }
+
 export class WebRTCManager {
   constructor(signalingClient, onProgress, onFileComplete) {
     this.signalingClient = signalingClient;
+    this.myPeerId = signalingClient.peerId;
     this.onProgress = onProgress;
     this.onFileComplete = onFileComplete;
     this.onTransferStart = null;
     this.connections = new Map();
     this.channels = new Map();
     this.incomingFiles = new Map();
-    this.activeSends = new Map(); // peerId -> { cancelled: bool } for cancel support
+    this.activeSends = new Map();
+    this._makingOffer = new Map(); // Track offer creation per peer
+    this._pendingCandidates = new Map(); // Buffer candidates until remote desc is set
   }
 
-  createConnection(peerId, isInitiator) {
+  // "Polite peer" pattern: The peer with the SMALLER ID is "polite"
+  // and will yield when both sides send offers simultaneously (glare)
+  _isPolite(peerId) {
+    return this.myPeerId < peerId;
+  }
+
+  createConnection(peerId) {
     if (this.connections.has(peerId)) {
       const existing = this.connections.get(peerId);
-      // If connection is still alive, reuse it
       if (existing.connectionState !== 'closed' && existing.connectionState !== 'failed') {
         return existing;
       }
-      // Otherwise clean up and create new
       this.connections.delete(peerId);
       this.channels.delete(peerId);
     }
@@ -79,75 +86,123 @@ export class WebRTCManager {
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      console.log(`[WebRTC] ${peerId.substring(0,8)} state: ${pc.connectionState}`);
+      if (pc.connectionState === 'failed') {
+        // Auto-restart on failure
         this.connections.delete(peerId);
         this.channels.delete(peerId);
       }
     };
 
-    if (isInitiator) {
-      // Create high-throughput data channel
-      const channel = pc.createDataChannel('fileTransfer', {
-        ordered: true,
-        maxRetransmits: 30
-      });
-      this.setupChannel(peerId, channel);
+    pc.ondatachannel = (event) => {
+      console.log(`[WebRTC] Got data channel from ${peerId.substring(0,8)}`);
+      this.setupChannel(peerId, event.channel);
+    };
 
-      pc.createOffer().then(offer => {
-        return pc.setLocalDescription(offer);
-      }).then(() => {
+    // Negotiation needed — handles both initial and renegotiation
+    pc.onnegotiationneeded = async () => {
+      try {
+        this._makingOffer.set(peerId, true);
+        await pc.setLocalDescription();
         this.signalingClient.sendSignal(peerId, { sdp: pc.localDescription });
-      }).catch(e => console.error("Error creating offer", e));
-    } else {
-      pc.ondatachannel = (event) => {
-        this.setupChannel(peerId, event.channel);
-      };
-    }
+      } catch (e) {
+        console.error('[WebRTC] Negotiation error:', e);
+      } finally {
+        this._makingOffer.set(peerId, false);
+      }
+    };
 
     this.connections.set(peerId, pc);
     return pc;
   }
 
-  // Pre-connect to a peer as soon as they're discovered (for instant file transfer later)
+  // Pre-connect: Only the "impolite" peer (larger ID) initiates
+  // This prevents glare (both sides sending offers simultaneously)
   preConnect(peerId) {
-    if (!this.connections.has(peerId) && !this.channels.has(peerId)) {
-      this.createConnection(peerId, true);
+    if (this.channels.has(peerId)) return; // Already have a channel
+
+    const pc = this.createConnection(peerId);
+
+    // Only the impolite peer (larger ID) creates the data channel
+    // This triggers onnegotiationneeded → sends offer
+    if (!this._isPolite(peerId)) {
+      console.log(`[WebRTC] I'm impolite, initiating to ${peerId.substring(0,8)}`);
+      const channel = pc.createDataChannel('fileTransfer', {
+        ordered: true,
+        maxRetransmits: 30
+      });
+      this.setupChannel(peerId, channel);
+    } else {
+      console.log(`[WebRTC] I'm polite, waiting for ${peerId.substring(0,8)} to initiate`);
     }
   }
 
   setupChannel(peerId, channel) {
     channel.binaryType = 'arraybuffer';
-    // Set high buffer threshold for speed
     if (typeof channel.bufferedAmountLowThreshold !== 'undefined') {
-      channel.bufferedAmountLowThreshold = 2 * 1024 * 1024; // 2MB buffer
+      channel.bufferedAmountLowThreshold = 2 * 1024 * 1024;
     }
     this.channels.set(peerId, channel);
 
-    channel.onopen = () => {};
+    channel.onopen = () => {
+      console.log(`[WebRTC] Channel OPEN with ${peerId.substring(0,8)} ✅`);
+    };
     channel.onclose = () => {
       this.channels.delete(peerId);
     };
-
     channel.onmessage = (event) => {
       this.handleIncomingData(peerId, event.data);
     };
   }
 
-  handleSignal(peerId, signal) {
-    const pc = this.createConnection(peerId, false);
+  // "Perfect negotiation" signal handler — handles glare correctly
+  async handleSignal(peerId, signal) {
+    const pc = this.createConnection(peerId);
+    const polite = this._isPolite(peerId);
 
     if (signal.sdp) {
-      pc.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
-        if (pc.remoteDescription.type === 'offer') {
-          return pc.createAnswer().then(answer => {
-            return pc.setLocalDescription(answer);
-          }).then(() => {
-            this.signalingClient.sendSignal(peerId, { sdp: pc.localDescription });
-          });
+      const offerCollision =
+        (signal.sdp.type === 'offer') &&
+        (this._makingOffer.get(peerId) || pc.signalingState !== 'stable');
+
+      const ignoreOffer = !polite && offerCollision;
+
+      if (ignoreOffer) {
+        console.log(`[WebRTC] Ignoring colliding offer from ${peerId.substring(0,8)} (I'm impolite)`);
+        return;
+      }
+
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+
+        // Flush any buffered candidates
+        const pending = this._pendingCandidates.get(peerId) || [];
+        for (const c of pending) {
+          await pc.addIceCandidate(c).catch(() => {});
         }
-      }).catch(e => console.error("Error setting session description", e));
+        this._pendingCandidates.delete(peerId);
+
+        if (signal.sdp.type === 'offer') {
+          await pc.setLocalDescription();
+          this.signalingClient.sendSignal(peerId, { sdp: pc.localDescription });
+        }
+      } catch (e) {
+        console.error('[WebRTC] Signal handling error:', e);
+      }
+
     } else if (signal.candidate) {
-      pc.addIceCandidate(new RTCIceCandidate(signal.candidate)).catch(e => console.error("Error adding Ice Candidate", e));
+      try {
+        if (pc.remoteDescription) {
+          await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        } else {
+          // Buffer candidate until remote description is set
+          const pending = this._pendingCandidates.get(peerId) || [];
+          pending.push(new RTCIceCandidate(signal.candidate));
+          this._pendingCandidates.set(peerId, pending);
+        }
+      } catch (e) {
+        console.error('[WebRTC] ICE candidate error:', e);
+      }
     }
   }
 
@@ -171,7 +226,6 @@ export class WebRTCManager {
         const blob = new Blob(fileData.chunks, { type: fileData.meta.mimeType });
         this.incomingFiles.delete(peerId);
 
-        // Fix filename extension if missing
         const downloadName = ensureExtension(fileData.meta.name, fileData.meta.mimeType);
 
         // Send ACK
@@ -196,7 +250,6 @@ export class WebRTCManager {
         if (this.onFileComplete) this.onFileComplete(peerId, meta.filename, 'send');
 
       } else if (meta.type === 'cancel') {
-        // Sender cancelled — discard partial data
         this.incomingFiles.delete(peerId);
         if (this.onProgress) this.onProgress(peerId, meta.filename || 'file', -1, 0, 'receive');
       }
@@ -212,12 +265,10 @@ export class WebRTCManager {
     }
   }
 
-  // Cancel an ongoing send
   cancelSend(peerId) {
     const sendState = this.activeSends.get(peerId);
     if (sendState) {
       sendState.cancelled = true;
-      // Notify receiver
       const channel = this.channels.get(peerId);
       if (channel && channel.readyState === 'open') {
         channel.send(JSON.stringify({ type: 'cancel', filename: sendState.filename }));
@@ -226,7 +277,6 @@ export class WebRTCManager {
     }
   }
 
-  // Cancel an ongoing receive
   cancelReceive(peerId) {
     this.incomingFiles.delete(peerId);
   }
@@ -235,7 +285,7 @@ export class WebRTCManager {
     const channel = this.channels.get(peerId);
     if (!channel || channel.readyState !== 'open') {
       if (retryCount === 0) {
-        this.createConnection(peerId, true);
+        this.preConnect(peerId);
       }
       if (retryCount < 4) {
         setTimeout(() => this.sendFile(peerId, file, retryCount + 1), 2000);
@@ -245,7 +295,6 @@ export class WebRTCManager {
       return;
     }
 
-    // Track send state for cancel support
     const fileName = ensureExtension(file.name, file.type);
     const sendState = { cancelled: false, filename: fileName };
     this.activeSends.set(peerId, sendState);
@@ -261,7 +310,6 @@ export class WebRTCManager {
 
     reader.onload = (e) => {
       const sendNextChunk = () => {
-        // Check if cancelled
         if (sendState.cancelled) {
           this.activeSends.delete(peerId);
           return;
@@ -279,7 +327,7 @@ export class WebRTCManager {
         offset += e.target.result.byteLength;
 
         const progress = Math.min((offset / file.size) * 100, 100);
-        if (this.onProgress) this.onProgress(peerId, file.name, progress, file.size, 'send');
+        if (this.onProgress) this.onProgress(peerId, fileName, progress, file.size, 'send');
 
         if (offset < file.size) {
           readSlice(offset);
@@ -296,7 +344,7 @@ export class WebRTCManager {
       reader.readAsArrayBuffer(slice);
     };
 
-    channel.bufferedAmountLowThreshold = 2 * 1024 * 1024; // 2MB for speed
+    channel.bufferedAmountLowThreshold = 2 * 1024 * 1024;
     readSlice(0);
   }
 
@@ -329,7 +377,7 @@ export class WebRTCManager {
 
     const header = { type: 'header', name: fileName, size: file.size, mimeType: file.type };
     this.signalingClient.sendRelay(peerId, JSON.stringify(header));
-    if (this.onProgress) this.onProgress(peerId, file.name, 0, file.size, 'send');
+    if (this.onProgress) this.onProgress(peerId, fileName, 0, file.size, 'send');
 
     let offset = 0;
     const reader = new FileReader();
@@ -342,14 +390,14 @@ export class WebRTCManager {
       offset += e.target.result.byteLength;
 
       const progress = Math.min((offset / file.size) * 100, 100);
-      if (this.onProgress) this.onProgress(peerId, file.name, progress, file.size, 'send');
+      if (this.onProgress) this.onProgress(peerId, fileName, progress, file.size, 'send');
 
       if (offset < file.size) {
         setTimeout(() => readSlice(offset), 10);
       } else {
         this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'done' }));
         this.activeSends.delete(peerId);
-        if (this.onFileComplete) this.onFileComplete(peerId, file.name, 'send');
+        if (this.onFileComplete) this.onFileComplete(peerId, fileName, 'send');
       }
     };
 
