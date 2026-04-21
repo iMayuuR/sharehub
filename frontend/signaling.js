@@ -11,14 +11,25 @@ export class SignalingClient {
   }
 
   connect() {
-    // For local dev, assuming signaling server is on port 3000
-    // In production, this would be wss://yourdomain.com
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname;
     const urlParams = new URL(window.location.href).searchParams;
     const roomId = urlParams.get('roomId');
-    
-    let url = `${protocol}//${host}:3000?peerId=${this.peerId}`;
+
+    // Production: use VITE_SIGNALING_URL env variable (set during Vercel build)
+    // Local dev: auto-detect hostname on port 3000
+    const signalingBase = import.meta.env.VITE_SIGNALING_URL;
+    let url;
+
+    if (signalingBase) {
+      // Production — Render backend (e.g., wss://sharehub-signaling.onrender.com)
+      const base = signalingBase.replace(/^http/, 'ws');
+      url = `${base}?peerId=${this.peerId}`;
+    } else {
+      // Local development — same host, port 3000
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.hostname;
+      url = `${protocol}//${host}:3000?peerId=${this.peerId}`;
+    }
+
     if (roomId) url += `&roomId=${roomId}`;
     
     this.ws = new WebSocket(url);

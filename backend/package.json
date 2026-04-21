@@ -1,17 +1,19 @@
 {
-  "name": "backend",
+  "name": "sharehub-signaling",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "WebSocket signaling server for ShareHub P2P file transfer",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
+  "author": "Mayur Patil",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
     "express": "^5.2.1",
     "ws": "^8.20.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
