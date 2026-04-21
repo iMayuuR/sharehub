@@ -127,6 +127,14 @@ function init() {
     });
   }
 
+  // Keepalive ping — prevents Render free tier from sleeping (13 min interval)
+  const signalingUrl = import.meta.env.VITE_SIGNALING_URL;
+  if (signalingUrl) {
+    const ping = () => fetch(`${signalingUrl}/health`).catch(() => {});
+    ping(); // Wake it up immediately on page load
+    setInterval(ping, 13 * 60 * 1000); // Then every 13 minutes
+  }
+
   // PWA Install Prompt Logic
   let deferredPrompt;
   

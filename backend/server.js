@@ -6,6 +6,9 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+// Keepalive endpoint — pinged by frontend to prevent Render free tier sleep
+app.get('/health', (req, res) => res.status(200).send('ok'));
+
 // Store connected peers: Map<string, { ws, rooms, peerId }>
 const peers = new Map();
 
