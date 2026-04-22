@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.1.0] — 2026-04-22
+
+### Fixed
+- **99% Stuck Transfer** — Forced progress to 100% on both sender and receiver upon file completion to prevent UI stall due to floating-point rounding.
+- **ACK Synchronization** — Implemented triple-redundant acknowledgment (Data Channel + Signaling Fallback + 8s Timeout) to ensure sender always marks transfer as complete.
+- **CSS 404 (Stale Assets)** — Bumped Service Worker to v4 and removed hashed asset pre-caching to prevent 404 errors on site updates.
+- **Mobile UI Overlap** — Fixed active transfer sheet covering the footer. Added dynamic padding-bottom management.
+- **Console Cleanup** — Removed all production console logs and debug statements for a clean developer console.
+
+### Improved
+- **Local Discovery** — Forced IPv4 fetching and implemented IPv4-mapped IPv6 normalization on the server for more reliable same-network peer grouping.
+- **Mobile UX** — Disabled text selection on interactive elements to prevent ugly blue highlighting on touch. Increased mobile cancel button size to 36px for better touch targets.
+- **Room Persistence** — Implemented "Auto-Join Last Room" memory. If you pair with a Room Code once, ShareHub remembers it and automatically joins it on next visit for a seamless AirDrop-like experience.
+
+---
+
 ## [1.0.0] — 2026-04-21
 
 ### Added

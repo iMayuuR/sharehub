@@ -34,6 +34,7 @@ Drop a file on one device, receive it on another. That is the entire workflow.
 - **Persistent Identity** — Each device gets a randomly generated name and avatar (e.g., "Cosmic Dolphin 🐬") stored in localStorage. Editable at any time.
 - **Drag and Drop** — Drag files directly onto a peer card to initiate a transfer. No file picker required.
 - **Responsive Design** — Works on phones, tablets, and desktops. The layout adapts from a single-column mobile view to a multi-column desktop grid.
+- **Room Persistence** — ShareHub remembers the last manually joined Room Code and automatically reconnects on next visit, making pairing a one-time setup for private networks.
 
 ## Screenshots
 

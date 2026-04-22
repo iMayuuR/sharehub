@@ -55,14 +55,25 @@ wss.on('connection', (ws, req) => {
 
   const rooms = new Set();
 
-  // 1. Server-detected IP room
-  const serverIp = getClientIp(req);
+  // 1. Get real client IP
+  let serverIp = getClientIp(req);
+  
+  // Normalize IPv4-mapped IPv6 (e.g. ::ffff:1.2.3.4 -> 1.2.3.4)
+  if (serverIp.includes(':') && serverIp.includes('.')) {
+    const parts = serverIp.split(':');
+    serverIp = parts[parts.length - 1];
+  }
+  
+  // Group by Server-detected IP
   rooms.add(`ip-${serverIp}`);
 
-  // 2. Client-reported public IP (from ipify — more reliable for same-network matching)
-  if (clientPublicIp && clientPublicIp !== 'unknown' && clientPublicIp !== 'null') {
+  // Group by Client-reported IP (if different)
+  if (clientPublicIp && clientPublicIp !== 'unknown' && clientPublicIp !== serverIp) {
     rooms.add(`ip-${clientPublicIp}`);
   }
+
+  // Debug: Server seeing peer in these network rooms
+  // console.log(`[Discovery] Peer ${peerId} grouped in:`, Array.from(rooms));
 
   // 3. Own peerId as room (for direct signaling)
   rooms.add(peerId);
