@@ -74,6 +74,11 @@ function init() {
          webrtcManager.preConnect(fromPeerId);
          return;
       }
+      // Backup ACK via signaling (when data channel ACK fails)
+      if (signal.action === 'ack') {
+         if (webrtcManager.onFileComplete) webrtcManager.onFileComplete(fromPeerId, signal.filename, 'send');
+         return;
+      }
       // Otherwise it's an RTC signal
       webrtcManager.handleSignal(fromPeerId, signal);
     },

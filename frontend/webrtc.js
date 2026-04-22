@@ -223,16 +223,21 @@ export class WebRTCManager {
         const fileData = this.incomingFiles.get(peerId);
         if (!fileData) return;
 
+        // Force progress to 100% (fixes 99% stuck from float rounding)
+        if (this.onProgress) this.onProgress(peerId, fileData.meta.name, 100, fileData.meta.size, 'receive');
+
         const blob = new Blob(fileData.chunks, { type: fileData.meta.mimeType });
         this.incomingFiles.delete(peerId);
 
         const downloadName = ensureExtension(fileData.meta.name, fileData.meta.mimeType);
 
-        // Send ACK
+        // Send ACK immediately
         const channel = this.channels.get(peerId);
         if (channel && channel.readyState === 'open') {
           channel.send(JSON.stringify({ type: 'ack', filename: downloadName }));
         }
+        // Also send ACK via signaling as backup (in case data channel is flaky)
+        this.signalingClient.sendSignal(peerId, { action: 'ack', filename: downloadName });
 
         // Trigger download
         const url = URL.createObjectURL(blob);
@@ -332,8 +337,16 @@ export class WebRTCManager {
         if (offset < file.size) {
           readSlice(offset);
         } else {
+          // Force sender progress to exactly 100%
+          if (this.onProgress) this.onProgress(peerId, fileName, 100, file.size, 'send');
           channel.send(JSON.stringify({ type: 'done' }));
           this.activeSends.delete(peerId);
+
+          // ACK timeout fallback: if no ACK in 8s, auto-complete
+          // (handles edge case where ACK message is lost)
+          setTimeout(() => {
+            if (this.onFileComplete) this.onFileComplete(peerId, fileName, 'send');
+          }, 8000);
         }
       };
       sendNextChunk();
