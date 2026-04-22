@@ -2,14 +2,14 @@
 
 async function getPublicIp() {
   const apis = [
+    'https://api4.ipify.org?format=json', // Force IPv4 for better NAT matching
     'https://api.ipify.org?format=json',
-    'https://api.seeip.org/jsonip',
-    'https://api.my-ip.io/v2/ip.json'
+    'https://api.seeip.org/jsonip'
   ];
   for (const api of apis) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
+      const timeout = setTimeout(() => controller.abort(), 2000);
       const res = await fetch(api, { signal: controller.signal });
       clearTimeout(timeout);
       const data = await res.json();
@@ -63,8 +63,12 @@ export class SignalingClient {
     }
 
     if (this._roomId) url += `&roomId=${encodeURIComponent(this._roomId)}`;
-
-    if (this.onConnectionChange) this.onConnectionChange('connecting');
+    
+    // Auto-join last used room for "Same Network" feel
+    const lastRoom = localStorage.getItem('sharehub_last_room');
+    if (lastRoom && !this._roomId) {
+      url += `&roomId=${encodeURIComponent(lastRoom)}`;
+    }
 
     try {
       this.ws = new WebSocket(url);
@@ -127,7 +131,9 @@ export class SignalingClient {
 
   joinRoom(roomCode) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'join-room', roomCode }));
+      const code = roomCode.toUpperCase().trim();
+      localStorage.setItem('sharehub_last_room', code);
+      this.ws.send(JSON.stringify({ type: 'join-room', roomCode: code }));
     }
   }
 
