@@ -200,13 +200,16 @@ export class UIManager {
     card.id = `peer-${peerId}`;
 
     card.innerHTML = `
-      <div class="avatar">${avatar}</div>
+      <div class="avatar"></div>
       <div class="peer-info">
-        <h3>${name}</h3>
+        <h3></h3>
         <p class="peer-status">Ready to receive</p>
       </div>
       <button class="btn-send">Send File</button>
     `;
+    
+    card.querySelector('.avatar').textContent = avatar;
+    card.querySelector('.peer-info h3').textContent = name;
 
     // Click card to select
     card.addEventListener('click', (e) => {
@@ -315,7 +318,7 @@ export class UIManager {
       item.innerHTML = `
         <div class="transfer-header">
           <span class="transfer-direction">${dirLabel}</span>
-          <span class="transfer-name">${filename}</span>
+          <span class="transfer-name"></span>
           <span class="transfer-percent">0%</span>
           <button class="btn-cancel-transfer" title="Cancel">✕</button>
         </div>
@@ -323,6 +326,8 @@ export class UIManager {
           <div class="transfer-progress-fill ${direction === 'receive' ? 'receive' : ''}"></div>
         </div>
       `;
+      
+      item.querySelector('.transfer-name').textContent = filename;
 
       // Wire cancel button
       const cancelBtn = item.querySelector('.btn-cancel-transfer');
