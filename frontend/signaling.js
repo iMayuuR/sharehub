@@ -1,13 +1,11 @@
 // signaling.js
 
-// Fetch public IP — multiple fallbacks for reliability
 async function getPublicIp() {
   const apis = [
     'https://api.ipify.org?format=json',
     'https://api.seeip.org/jsonip',
     'https://api.my-ip.io/v2/ip.json'
   ];
-  
   for (const api of apis) {
     try {
       const controller = new AbortController();
@@ -17,9 +15,7 @@ async function getPublicIp() {
       const data = await res.json();
       const ip = data.ip || data.IP || data.origin;
       if (ip) return ip;
-    } catch {
-      continue;
-    }
+    } catch { continue; }
   }
   return 'unknown';
 }
@@ -50,13 +46,10 @@ export class SignalingClient {
     const urlParams = new URL(window.location.href).searchParams;
     this._roomId = roomId || urlParams.get('roomId') || urlParams.get('room');
 
-    // Fetch public IP once (cached after first call)
     if (!this._publicIp) {
       this._publicIp = await getPublicIp();
-      console.log('[ShareHub] Public IP:', this._publicIp);
     }
 
-    // Build WebSocket URL
     const signalingBase = import.meta.env.VITE_SIGNALING_URL;
     let url;
 
@@ -71,7 +64,6 @@ export class SignalingClient {
 
     if (this._roomId) url += `&roomId=${encodeURIComponent(this._roomId)}`;
 
-    console.log('[ShareHub] Connecting to:', url);
     if (this.onConnectionChange) this.onConnectionChange('connecting');
 
     try {
@@ -83,7 +75,6 @@ export class SignalingClient {
     }
 
     this.ws.onopen = () => {
-      console.log('[ShareHub] WebSocket connected');
       if (this.onConnectionChange) this.onConnectionChange('connected');
     };
 
@@ -91,19 +82,14 @@ export class SignalingClient {
       try {
         const data = JSON.parse(event.data);
         switch (data.type) {
-          case 'connected':
-            console.log('[ShareHub] Server confirmed. Rooms:', data.rooms);
-            break;
+          case 'connected': break;
           case 'peers-list':
-            console.log('[ShareHub] Peers in room:', data.peers);
             if (this.onPeersList) this.onPeersList(data.peers);
             break;
           case 'peer-joined':
-            console.log('[ShareHub] Peer joined:', data.peerId);
             if (this.onPeerJoined) this.onPeerJoined(data.peerId);
             break;
           case 'peer-left':
-            console.log('[ShareHub] Peer left:', data.peerId);
             if (this.onPeerLeft) this.onPeerLeft(data.peerId);
             break;
           case 'signal':
@@ -113,22 +99,17 @@ export class SignalingClient {
             if (this.onRelay) this.onRelay(data.from, data.payload);
             break;
           case 'room-joined':
-            console.log('[ShareHub] Joined room:', data.roomCode);
             if (this.onRoomJoined) this.onRoomJoined(data.roomCode);
             break;
         }
-      } catch(e) {
-        console.error('[ShareHub] Parse error:', e);
-      }
+      } catch {}
     };
 
-    this.ws.onerror = (e) => {
-      console.error('[ShareHub] WebSocket error');
+    this.ws.onerror = () => {
       if (this.onConnectionChange) this.onConnectionChange('error');
     };
 
     this.ws.onclose = () => {
-      console.log('[ShareHub] WebSocket closed');
       if (this.onConnectionChange) this.onConnectionChange('disconnected');
       if (!this._intentionalClose) this._scheduleReconnect();
     };

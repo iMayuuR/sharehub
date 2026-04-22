@@ -86,28 +86,22 @@ export class WebRTCManager {
     };
 
     pc.onconnectionstatechange = () => {
-      console.log(`[WebRTC] ${peerId.substring(0,8)} state: ${pc.connectionState}`);
       if (pc.connectionState === 'failed') {
-        // Auto-restart on failure
         this.connections.delete(peerId);
         this.channels.delete(peerId);
       }
     };
 
     pc.ondatachannel = (event) => {
-      console.log(`[WebRTC] Got data channel from ${peerId.substring(0,8)}`);
       this.setupChannel(peerId, event.channel);
     };
 
-    // Negotiation needed — handles both initial and renegotiation
     pc.onnegotiationneeded = async () => {
       try {
         this._makingOffer.set(peerId, true);
         await pc.setLocalDescription();
         this.signalingClient.sendSignal(peerId, { sdp: pc.localDescription });
-      } catch (e) {
-        console.error('[WebRTC] Negotiation error:', e);
-      } finally {
+      } catch {} finally {
         this._makingOffer.set(peerId, false);
       }
     };
@@ -126,14 +120,11 @@ export class WebRTCManager {
     // Only the impolite peer (larger ID) creates the data channel
     // This triggers onnegotiationneeded → sends offer
     if (!this._isPolite(peerId)) {
-      console.log(`[WebRTC] I'm impolite, initiating to ${peerId.substring(0,8)}`);
       const channel = pc.createDataChannel('fileTransfer', {
         ordered: true,
         maxRetransmits: 30
       });
       this.setupChannel(peerId, channel);
-    } else {
-      console.log(`[WebRTC] I'm polite, waiting for ${peerId.substring(0,8)} to initiate`);
     }
   }
 
@@ -144,9 +135,7 @@ export class WebRTCManager {
     }
     this.channels.set(peerId, channel);
 
-    channel.onopen = () => {
-      console.log(`[WebRTC] Channel OPEN with ${peerId.substring(0,8)} ✅`);
-    };
+    channel.onopen = () => {};
     channel.onclose = () => {
       this.channels.delete(peerId);
     };
@@ -168,7 +157,6 @@ export class WebRTCManager {
       const ignoreOffer = !polite && offerCollision;
 
       if (ignoreOffer) {
-        console.log(`[WebRTC] Ignoring colliding offer from ${peerId.substring(0,8)} (I'm impolite)`);
         return;
       }
 
@@ -186,9 +174,7 @@ export class WebRTCManager {
           await pc.setLocalDescription();
           this.signalingClient.sendSignal(peerId, { sdp: pc.localDescription });
         }
-      } catch (e) {
-        console.error('[WebRTC] Signal handling error:', e);
-      }
+      } catch {}
 
     } else if (signal.candidate) {
       try {
@@ -200,9 +186,7 @@ export class WebRTCManager {
           pending.push(new RTCIceCandidate(signal.candidate));
           this._pendingCandidates.set(peerId, pending);
         }
-      } catch (e) {
-        console.error('[WebRTC] ICE candidate error:', e);
-      }
+      } catch {}
     }
   }
 

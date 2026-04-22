@@ -1,8 +1,7 @@
 // sw.js — ShareHub Service Worker
-const CACHE_NAME = 'sharehub-v3';
+const CACHE_NAME = 'sharehub-v4';
 const ASSETS = [
   '/',
-  '/index.html',
   '/manifest.json'
 ];
 
