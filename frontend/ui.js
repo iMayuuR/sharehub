@@ -378,9 +378,14 @@ export class UIManager {
 
   showTransferSheet() {
     this.transferSheet.classList.add('open');
+    // Push footer above the sheet
+    const footer = document.getElementById('appFooter');
+    if (footer) footer.style.paddingBottom = '260px';
   }
 
   hideTransferSheet() {
     this.transferSheet.classList.remove('open');
+    const footer = document.getElementById('appFooter');
+    if (footer) footer.style.paddingBottom = '30px';
   }
 }
