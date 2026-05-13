@@ -8,7 +8,6 @@ let identity = getIdentity();
 let signalingClient;
 let webrtcManager;
 let uiManager;
-let myAdName = '';
 
 window.myIdentityId = identity.id;
 
@@ -22,7 +21,8 @@ function init() {
   });
   
   uiManager.setIdentity(identity);
-  myAdName = JSON.stringify({ name: identity.name, avatar: identity.avatar, action: 'announce' });
+  // myAdName is used for WebSocket health check pings, not for peer announcements
+  // Actual announcements are handled via signalingClient.sendSignal() in the connected callback
 
   // Handle Profile Edits
   uiManager.saveProfileBtn.addEventListener('click', () => {
@@ -33,7 +33,6 @@ function init() {
     
     // Re-announce myself to all currently connected peers
     const announcement = { action: 'announce', name: identity.name, avatar: identity.avatar };
-    myAdName = JSON.stringify(announcement);
     for (const pId of peerMetadata.keys()) {
       signalingClient.sendSignal(pId, announcement);
     }
