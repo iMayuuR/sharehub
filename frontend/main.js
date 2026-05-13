@@ -50,18 +50,22 @@ function init() {
   signalingClient = new SignalingClient(
     identity.id,
     (joinedPeerId) => {
-      // Peer joined, announce ourselves to them
-      signalingClient.sendSignal(joinedPeerId, { action: 'announce', name: identity.name, avatar: identity.avatar });
+      // Peer joined - we only announce ourselves if we're in discoverable mode
+      if (isDiscoverable) {
+        signalingClient.sendSignal(joinedPeerId, { action: 'announce', name: identity.name, avatar: identity.avatar });
+      }
     },
     (leftPeerId) => {
       uiManager.removePeer(leftPeerId);
       peerMetadata.delete(leftPeerId);
     },
     (peersList) => {
-      // Current peers, announce myself to them
-      peersList.forEach(pId => {
-         signalingClient.sendSignal(pId, { action: 'announce', name: identity.name, avatar: identity.avatar });
-      });
+      // Current peers, announce myself to them only if discoverable
+      if (isDiscoverable) {
+        peersList.forEach(pId => {
+           signalingClient.sendSignal(pId, { action: 'announce', name: identity.name, avatar: identity.avatar });
+        });
+      }
     },
     (fromPeerId, signal) => {
       if (signal.action === 'announce') {
@@ -83,6 +87,9 @@ function init() {
       webrtcManager.handleRelayData(fromPeerId, payload);
     }
   );
+
+  // Track discoverability state
+  let isDiscoverable = true;
 
   // Track if we're currently using relay for a peer (to warn about data usage)
   let relayWarningShown = new Set();
