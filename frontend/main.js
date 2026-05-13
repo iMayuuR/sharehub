@@ -63,12 +63,17 @@ function init() {
       // Current peers, announce myself to them only if discoverable
       if (isDiscoverable) {
         peersList.forEach(pId => {
-           signalingClient.sendSignal(pId, { action: 'announce', name: identity.name, avatar: identity.avatar });
+           // Don't announce to ourselves
+           if (pId !== identity.id) {
+             signalingClient.sendSignal(pId, { action: 'announce', name: identity.name, avatar: identity.avatar });
+           }
         });
       }
     },
     (fromPeerId, signal) => {
       if (signal.action === 'announce') {
+         // Ignore our own announcements
+         if (fromPeerId === identity.id) return;
          peerMetadata.set(fromPeerId, { name: signal.name, avatar: signal.avatar });
          uiManager.addPeer(fromPeerId, signal.name, signal.avatar);
          // Pre-connect WebRTC immediately so file transfer is instant when user taps Send
