@@ -28,6 +28,7 @@ export class UIManager {
     this.transferStatus = document.getElementById('transferStatus');
     this.transferTitle = document.getElementById('transferTitle');
     this.fileInput = document.getElementById('fileInput');
+    this.fileInput.multiple = true;
     this.clearTransfersBtn = document.getElementById('clearTransfersBtn');
 
     this.mainReceiveBtn = document.getElementById('mainReceiveBtn');
@@ -229,7 +230,9 @@ export class UIManager {
       card.classList.remove('drag-over');
       if (e.dataTransfer.files.length > 0 && this.onPeerClick) {
         this.selectPeer(peerId);
-        this.onPeerClick(peerId, e.dataTransfer.files[0]);
+        Array.from(e.dataTransfer.files).forEach(file => {
+          this.onPeerClick(peerId, file);
+        });
       }
     });
 
@@ -258,7 +261,10 @@ export class UIManager {
 
       this.fileInput.onchange = (e) => {
         if (e.target.files.length > 0 && this.onPeerClick) {
-          this.onPeerClick(peerId, e.target.files[0]);
+          // Handle multiple files
+          Array.from(e.target.files).forEach(file => {
+            this.onPeerClick(peerId, file);
+          });
         }
       };
       this.fileInput.click();

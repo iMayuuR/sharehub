@@ -50,10 +50,7 @@ function init() {
   signalingClient = new SignalingClient(
     identity.id,
     (joinedPeerId) => {
-      // Peer joined, maybe wait for their announce signal or we can initiate a connection to get info.
-      // But actually, we need a way to know their name!
-      // Here we cheat a little by using WebRTC data channel or signaling channel to send names.
-      // We'll broadcast our name back over signaling if someone joins.
+      // Peer joined, announce ourselves to them
       signalingClient.sendSignal(joinedPeerId, { action: 'announce', name: identity.name, avatar: identity.avatar });
     },
     (leftPeerId) => {
@@ -86,6 +83,9 @@ function init() {
       webrtcManager.handleRelayData(fromPeerId, payload);
     }
   );
+
+  // Track if we're currently using relay for a peer (to warn about data usage)
+  let relayWarningShown = new Set();
 
   // Setup WebRTC
   webrtcManager = new WebRTCManager(
@@ -131,6 +131,14 @@ function init() {
       radarDot.style.background = '#00ff6a';
       radarDot.style.boxShadow = '0 0 8px rgba(0,255,106,0.6)';
       if (subtitle) subtitle.textContent = 'Connected to server. Devices on your network appear automatically. Use a Room Code to connect across any network.';
+      // Announce ourselves when we connect
+      signalingClient.sendSignal(identity.id, { action: 'announce', name: identity.name, avatar: identity.avatar });
+
+      // Auto-join room from URL (from QR code scan or shared link)
+      const urlRoom = new URL(window.location.href).searchParams.get('room');
+      if (urlRoom) {
+        signalingClient.joinRoom(urlRoom.toUpperCase().trim());
+      }
     } else if (state === 'connecting') {
       radarDot.style.background = '#ffaa00';
       radarDot.style.boxShadow = '0 0 8px rgba(255,170,0,0.6)';
@@ -154,18 +162,6 @@ function init() {
 
   signalingClient.connect();
 
-  // Auto-join room from URL (from QR code scan or shared link)
-  const urlRoom = new URL(window.location.href).searchParams.get('room');
-  if (urlRoom) {
-    // Wait for WebSocket to open, then join the room
-    const waitAndJoin = setInterval(() => {
-      if (signalingClient.ws && signalingClient.ws.readyState === WebSocket.OPEN) {
-        clearInterval(waitAndJoin);
-        signalingClient.joinRoom(urlRoom.toUpperCase().trim());
-      }
-    }, 200);
-  }
-
   // Register PWA Service Worker
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
@@ -184,9 +180,16 @@ function init() {
   // Mobile: reconnect WebSocket when app comes back to foreground
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
+      // App came to foreground - instant wake for network discovery
       if (!signalingClient.ws || signalingClient.ws.readyState > 1) {
         signalingClient.connect();
       }
+      // Resume any background transfers that were paused
+      webrtcManager.resumeTransfers();
+    } else {
+      // App went to background or screen off
+      // Pause transfers to save battery but keep signaling alive for discovery
+      webrtcManager.pauseTransfers();
     }
   });
 

@@ -1,20 +1,36 @@
 // signaling.js
 
+// Cache public IP for 1 hour to avoid repeated fetches
+let _cachedPublicIp = null;
+let _cacheTimestamp = 0;
+const CACHE_DURATION_MS = 3600000; // 1 hour
+
 async function getPublicIp() {
+  // Return cached IP if still valid
+  if (_cachedPublicIp && (Date.now() - _cacheTimestamp) < CACHE_DURATION_MS) {
+    return _cachedPublicIp;
+  }
+
   const apis = [
     'https://api4.ipify.org?format=json', // Force IPv4 for better NAT matching
     'https://api.ipify.org?format=json',
     'https://api.seeip.org/jsonip'
   ];
+
   for (const api of apis) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2000);
+      // Reduced timeout for faster failure
+      const timeout = setTimeout(() => controller.abort(), 500);
       const res = await fetch(api, { signal: controller.signal });
       clearTimeout(timeout);
       const data = await res.json();
       const ip = data.ip || data.IP || data.origin;
-      if (ip) return ip;
+      if (ip) {
+        _cachedPublicIp = ip;
+        _cacheTimestamp = Date.now();
+        return ip;
+      }
     } catch { continue; }
   }
   return 'unknown';
@@ -35,6 +51,7 @@ export class SignalingClient {
     this._reconnectTimer = null;
     this._intentionalClose = false;
     this._publicIp = null;
+    this._reconnectAttempts = 0;
   }
 
   async connect(roomId) {
@@ -80,6 +97,8 @@ export class SignalingClient {
 
     this.ws.onopen = () => {
       if (this.onConnectionChange) this.onConnectionChange('connected');
+      // Reset reconnect attempts on successful connection
+      this._reconnectAttempts = 0;
     };
 
     this.ws.onmessage = (event) => {
@@ -120,7 +139,10 @@ export class SignalingClient {
   }
 
   _scheduleReconnect() {
-    this._reconnectTimer = setTimeout(() => this.connect(this._roomId), 3000);
+    // Exponential backoff: start at 500ms, max 5 seconds
+    const delay = Math.min(5000, 500 * (2 ** this._reconnectAttempts));
+    this._reconnectTimer = setTimeout(() => this.connect(this._roomId), delay);
+    this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
   }
 
   disconnect() {

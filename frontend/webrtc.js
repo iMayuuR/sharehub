@@ -35,6 +35,8 @@ export class WebRTCManager {
     this.activeSends = new Map();
     this._makingOffer = new Map(); // Track offer creation per peer
     this._pendingCandidates = new Map(); // Buffer candidates until remote desc is set
+    this._relayWarningShown = new Set(); // Track which peers we've warned about relay usage
+    this._connectionTimeouts = new Map(); // Track connection timeouts per peer
   }
 
   // "Polite peer" pattern: The peer with the SMALLER ID is "polite"
@@ -58,22 +60,32 @@ export class WebRTCManager {
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
-        {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        }
+        { urls: 'stun:stun.stunprotocol.org:3478' },
+        { urls: 'stun:stun.voiparound.com' },
+        { urls: 'stun:stun.voipbuster.com' },
+        { urls: 'stun:stun.voipstunt.com' },
+        { urls: 'stun:stun.ideasip.com' },
+        { urls: 'stun:stun.iptel.org' },
+        { urls: 'stun:stun.rixtelecom.se' }
       ],
+      // TURN servers for relay fallback when direct connection fails
+      // Using openrelay.metered.ca as a free, reliable TURN server
+      // In production, you might want to use a dedicated TURN service
+      ...([{
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }]),
       iceCandidatePoolSize: 10
     };
 
@@ -272,40 +284,72 @@ export class WebRTCManager {
 
   sendFile(peerId, file, retryCount = 0) {
     const channel = this.channels.get(peerId);
-    if (!channel || channel.readyState !== 'open') {
-      if (retryCount === 0) {
-        this.preConnect(peerId);
-      }
-      if (retryCount < 4) {
-        setTimeout(() => this.sendFile(peerId, file, retryCount + 1), 2000);
-      } else {
-        this.sendFileRelay(peerId, file);
-      }
+
+    // Check if we have an open channel
+    if (channel && channel.readyState === 'open') {
+      // Direct connection available - use it immediately
+      this._sendFileDirect(peerId, file);
       return;
     }
 
-    const fileName = ensureExtension(file.name, file.type);
-    const sendState = { cancelled: false, filename: fileName };
+    // No direct connection - try to establish one
+    if (retryCount === 0) {
+      this.preConnect(peerId);
+
+      // Set up a timeout to fall back to relay if direct connection takes too long
+      const timeoutId = setTimeout(() => {
+        if (this.channels.get(peerId)?.readyState !== 'open') {
+          // Direct connection failed or taking too long, warn and fall back to relay
+          this._warnAboutRelayUsage(peerId, file.size);
+          this.sendFileRelay(peerId, file);
+          this._connectionTimeouts.delete(peerId);
+        }
+      }, 8000); // 8 second timeout for direct connection attempt
+
+      this._connectionTimeouts.set(peerId, timeoutId);
+    } else if (retryCount < 4) {
+      setTimeout(() => this.sendFile(peerId, file, retryCount + 1), 2000);
+    } else {
+      // Clear timeout if it exists
+      if (this._connectionTimeouts.has(peerId)) {
+        clearTimeout(this._connectionTimeouts.get(peerId));
+        this._connectionTimeouts.delete(peerId);
+      }
+
+      // Warn user about potential data usage when falling back to relay
+      this._warnAboutRelayUsage(peerId, file.size);
+      this.sendFileRelay(peerId, file);
+    }
+  }
+
+  _sendFileDirect(peerId, file) {
+    var channel = this.channels.get(peerId);
+    if (!channel || channel.readyState !== 'open') {
+      return;
+    }
+
+    var fileName = ensureExtension(file.name, file.type);
+    var sendState = { cancelled: false, filename: fileName };
     this.activeSends.set(peerId, sendState);
 
     if (this.onTransferStart) this.onTransferStart(peerId, fileName, 'send');
 
-    const header = { type: 'header', name: fileName, size: file.size, mimeType: file.type };
+    var header = { type: 'header', name: fileName, size: file.size, mimeType: file.type };
     channel.send(JSON.stringify(header));
     if (this.onProgress) this.onProgress(peerId, fileName, 0, file.size, 'send');
 
-    let offset = 0;
-    const reader = new FileReader();
+    var offset = 0;
+    var reader = new FileReader();
 
-    reader.onload = (e) => {
-      const sendNextChunk = () => {
+    reader.onload = function(e) {
+      var sendNextChunk = function() {
         if (sendState.cancelled) {
           this.activeSends.delete(peerId);
           return;
         }
 
         if (channel.bufferedAmount > channel.bufferedAmountLowThreshold) {
-          channel.onbufferedamountlow = () => {
+          channel.onbufferedamountlow = function() {
             channel.onbufferedamountlow = null;
             sendNextChunk();
           };
@@ -315,7 +359,7 @@ export class WebRTCManager {
         channel.send(e.target.result);
         offset += e.target.result.byteLength;
 
-        const progress = Math.min((offset / file.size) * 100, 100);
+        var progress = Math.min((offset / file.size) * 100, 100);
         if (this.onProgress) this.onProgress(peerId, fileName, progress, file.size, 'send');
 
         if (offset < file.size) {
@@ -328,22 +372,23 @@ export class WebRTCManager {
 
           // ACK timeout fallback: if no ACK in 8s, auto-complete
           // (handles edge case where ACK message is lost)
-          setTimeout(() => {
+          setTimeout(function() {
             if (this.onFileComplete) this.onFileComplete(peerId, fileName, 'send');
-          }, 8000);
+          }.bind(this), 8000);
         }
-      };
+      }.bind(this);
       sendNextChunk();
-    };
+    }.bind(this);
 
-    const readSlice = (o) => {
-      const slice = file.slice(o, o + CHUNK_SIZE);
+    var readSlice = function(o) {
+      var slice = file.slice(o, o + CHUNK_SIZE);
       reader.readAsArrayBuffer(slice);
     };
 
     channel.bufferedAmountLowThreshold = 2 * 1024 * 1024;
     readSlice(0);
   }
+
 
   arrayBufferToBase64(buffer) {
     let binary = '';
@@ -363,6 +408,20 @@ export class WebRTCManager {
       for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
       this.handleIncomingData(peerId, bytes.buffer);
     }
+  }
+
+  // Warn user about potential data usage when using relay
+  _warnAboutRelayUsage(peerId, fileSize) {
+    // Only show warning once per peer per session
+    if (this._relayWarningShown.has(peerId)) return;
+
+    const sizeMB = (fileSize / (1024 * 1024)).toFixed(1);
+    const warningMsg = `⚠️ Direct connection failed. Using relay mode which may consume up to ${sizeMB} MB of your data. For best results, ensure both devices are on the same network.`;
+
+    // Show toast notification (we'll need to access UIManager for this)
+    // For now, we'll log to console and rely on UI to show visual indicators
+    console.warn(warningMsg);
+    this._relayWarningShown.add(peerId);
   }
 
   sendFileRelay(peerId, file) {
@@ -403,5 +462,19 @@ export class WebRTCManager {
       reader.readAsArrayBuffer(slice);
     };
     readSlice(0);
+  }
+
+  // Pause all active transfers (called when app goes to background/screen off)
+  pauseTransfers() {
+    // We don't actually pause WebRTC data transfers as they're peer-to-peer
+    // but we can pause any UI updates or processing if needed
+    // For now, we'll just log that we're entering background mode
+    console.log('Entering background mode - transfers will continue but UI updates may be paused');
+  }
+
+  // Resume all transfers (called when app comes to foreground)
+  resumeTransfers() {
+    // Resume any UI updates or processing
+    console.log('Resuming from background mode');
   }
 }
