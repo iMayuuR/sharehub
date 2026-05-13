@@ -64,13 +64,16 @@ wss.on('connection', (ws, req) => {
     serverIp = parts[parts.length - 1];
   }
   
-  // Group by Server-detected IP
-  rooms.add(`ip-${serverIp}`);
-
-  // Group by Client-reported IP (if different)
-  if (clientPublicIp && clientPublicIp !== 'unknown' && clientPublicIp !== serverIp) {
-    rooms.add(`ip-${clientPublicIp}`);
+  // Determine the network IP to use for grouping
+  // Prefer client-reported public IP if available (same for all devices behind NAT)
+  // Fallback to server-detected IP (useful for self-hosted or when client IP detection fails)
+  let networkIp = serverIp;
+  if (clientPublicIp && clientPublicIp !== 'unknown') {
+    networkIp = clientPublicIp;
   }
+
+  // Group by Network IP
+  rooms.add(`ip-${networkIp}`);
 
   // Debug: Server seeing peer in these network rooms
   // console.log(`[Discovery] Peer ${peerId} grouped in:`, Array.from(rooms));

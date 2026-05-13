@@ -68,6 +68,13 @@ function init() {
            }
         });
       }
+      // Add any peers we don't have metadata for yet (to show them in UI)
+      peersList.forEach(pId => {
+        if (pId !== identity.id && !peerMetadata.has(pId)) {
+          // We don't know their name/avatar yet, add with placeholders
+          uiManager.addPeer(pId, 'Unknown Device', '💻');
+        }
+      });
     },
     (fromPeerId, signal) => {
       if (signal.action === 'announce') {
