@@ -37,6 +37,8 @@ export class WebRTCManager {
     this._pendingCandidates = new Map(); // Buffer candidates until remote desc is set
     this._relayWarningShown = new Set(); // Track which peers we've warned about relay usage
     this._connectionTimeouts = new Map(); // Track connection timeouts per peer
+    this.activeTransferCount = 0; // Track number of active transfers for wake lock
+    this.wakeLock = null; // Wake Lock handle
   }
 
   // "Polite peer" pattern: The peer with the SMALLER ID is "polite"
@@ -57,36 +59,70 @@ export class WebRTCManager {
 
     const rtcConfig = {
       iceServers: [
+        // Primary STUN servers - Google
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun.stunprotocol.org:3478' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+
+        // Secondary STUN servers - Firefox
+        { urls: 'stun:stun.services.mozilla.com' },
+
+        // Other reliable STUN servers
+        { urls: 'stun:stun.stunprotocol.org' },
         { urls: 'stun:stun.voiparound.com' },
         { urls: 'stun:stun.voipbuster.com' },
         { urls: 'stun:stun.voipstunt.com' },
         { urls: 'stun:stun.ideasip.com' },
         { urls: 'stun:stun.iptel.org' },
-        { urls: 'stun:stun.rixtelecom.se' }
+        { urls: 'stun:stun.rixtelecom.se' },
+        { urls: 'stun:stun.ekiga.net' },
+        { urls: 'stun:stun.freeswitch.org' },
+        { urls: 'stun:stun.l.google.com:19302?transport=udp' },
+
+        // STUN servers with IPv6 support
+        { urls: 'stun:[2a01:4f8:c2c:123f::1]:3478' },
+        { urls: 'stun:[2a01:4f8:c2c:123f::1]:3478?transport=udp' }
       ],
       // TURN servers for relay fallback when direct connection fails
-      // Using openrelay.metered.ca as a free, reliable TURN server
-      // In production, you might want to use a dedicated TURN service
-      ...([{
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      }]),
-      iceCandidatePoolSize: 10
+      // Using multiple TURN providers for better reliability
+      ...([
+        // openrelay.metered.ca (free tier)
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:80?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ]),
+      iceCandidatePoolSize: 20,
+      // ICE Transport Policy - allow both relay and host candidates
+      iceTransportPolicy: 'all',
+      // Bundle policy to reduce number of ICE checks
+      bundlePolicy: 'max-bundle',
+      // Rtcp mux policy
+      rtcpMuxPolicy: 'require',
+      // Enable ICE restart for better connection recovery
+      iceRestartTimeout: 30000,
+      // Reduce ICE timeout for faster failure detection
+      iceConnectionTimeout: 20000,
+      // Enable IPv6 candidates
+      // Note: iceTransportPolicy: 'all' already enables IPv6 when available
     };
 
     const pc = new RTCPeerConnection(rtcConfig);
@@ -304,7 +340,7 @@ export class WebRTCManager {
           this.sendFileRelay(peerId, file);
           this._connectionTimeouts.delete(peerId);
         }
-      }, 8000); // 8 second timeout for direct connection attempt
+      }, 5000); // 5 second timeout for direct connection attempt
 
       this._connectionTimeouts.set(peerId, timeoutId);
     } else if (retryCount < 4) {
@@ -464,17 +500,66 @@ export class WebRTCManager {
     readSlice(0);
   }
 
+    // Wake Lock to prevent screen from sleeping during transfers
+  async _requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator) {
+        this.wakeLock = await navigator.wakeLock.request('screen');
+        this.wakeLock.addEventListener('release', () => {
+          console.log('Wake Lock was released');
+          this.wakeLock = null;
+        });
+        console.log('Wake Lock is active');
+      }
+    } catch (err) {
+      console.error(`${err.name}, ${err.message}`);
+    }
+  }
+
+  async _releaseWakeLock() {
+    if (this.wakeLock) {
+      await this.wakeLock.release();
+      this.wakeLock = null;
+      console.log('Wake Lock released');
+    }
+  }
+
   // Pause all active transfers (called when app goes to background/screen off)
   pauseTransfers() {
     // We don't actually pause WebRTC data transfers as they're peer-to-peer
     // but we can pause any UI updates or processing if needed
     // For now, we'll just log that we're entering background mode
     console.log('Entering background mode - transfers will continue but UI updates may be paused');
+    // Note: We rely on Wake Lock to keep the screen awake, but if the page is hidden,
+    // browsers may still throttle timers. We'll show a notification in main.js.
   }
 
-  // Resume all transfers (called when app comes to foreground)
+  // Resume all transfers (when app comes to foreground)
   resumeTransfers() {
     // Resume any UI updates or processing
     console.log('Resuming from background mode');
+  }
+
+  // Track active transfers for wake lock management
+  _incrementActiveTransfers() {
+    this.activeTransferCount++;
+    if (this.activeTransferCount === 1) {
+      // First transfer started, request wake lock
+      this._requestWakeLock();
+    }
+  }
+
+  _decrementActiveTransfers() {
+    if (this.activeTransferCount > 0) {
+      this.activeTransferCount--;
+      if (this.activeTransferCount === 0) {
+        // No more active transfers, release wake lock
+        this._releaseWakeLock();
+      }
+    }
+  }
+
+  getActiveTransferCount() {
+    return this.activeTransferCount;
   }
 }

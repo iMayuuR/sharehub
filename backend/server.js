@@ -86,7 +86,7 @@ wss.on('connection', (ws, req) => {
 
   peers.set(peerId, { ws, rooms, peerId });
 
-  console.log(`[+] ${peerId.substring(0, 8)} connected | IP: ${serverIp} | clientIP: ${clientPublicIp} | rooms: ${Array.from(rooms).filter(r => r !== peerId).join(', ')}`);
+  console.log(`[+] ${peerId.substring(0, 8)} connected | serverIP: ${serverIp} | clientIP: ${clientPublicIp} | networkIP: ${networkIp} | rooms: ${Array.from(rooms).filter(r => r !== peerId).join(', ')}`);
 
   // Send connection confirmation with rooms (so frontend can log)
   ws.send(JSON.stringify({ type: 'connected', peerId, rooms: Array.from(rooms).filter(r => r !== peerId) }));
@@ -165,7 +165,7 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => clearInterval(keepAlive));
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3002;
 server.listen(PORT, () => {
   console.log(`Signaling server on port ${PORT}`);
 });

@@ -76,7 +76,7 @@ export class SignalingClient {
     } else {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
-      url = `${protocol}//${host}:3000?peerId=${this.peerId}&publicIp=${encodeURIComponent(this._publicIp)}`;
+      url = `${protocol}//${host}:3002?peerId=${this.peerId}&publicIp=${encodeURIComponent(this._publicIp)}`;
     }
 
     if (this._roomId) url += `&roomId=${encodeURIComponent(this._roomId)}`;

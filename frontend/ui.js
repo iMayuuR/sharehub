@@ -42,7 +42,7 @@ export class UIManager {
 
     this.onPeerClick = onPeerClick;
     this.onJoinRoom = null;
-    this.activeTransfers = new Map();
+    this.activeTransfers = new Map(); // key: transferId, value: { peerId, filename, direction, progress, totalSize, item }
     this.roomCode = generateRoomCode();
     this.selectedPeerId = null;
 
@@ -134,8 +134,13 @@ export class UIManager {
 
     if (this.clearTransfersBtn) {
       this.clearTransfersBtn.addEventListener('click', () => {
-        const items = this.transferContent.querySelectorAll('.transfer-item');
-        items.forEach(item => item.remove());
+        // Remove all transfer items
+        this.activeTransfers.forEach((value, key) => {
+          if (value.item && value.item.parentNode) {
+            value.item.remove();
+          }
+        });
+        this.activeTransfers.clear();
         this.transferStatus.style.display = 'block';
         this.transferTitle.textContent = "Ready to Transfer";
         this.clearTransfersBtn.style.display = 'none';
@@ -208,7 +213,7 @@ export class UIManager {
       </div>
       <button class="btn-send">Send File</button>
     `;
-    
+
     card.querySelector('.avatar').textContent = avatar;
     card.querySelector('.peer-info h3').textContent = name;
 
@@ -291,112 +296,233 @@ export class UIManager {
     if (statusEl) statusEl.textContent = statusText;
   }
 
-  updateProgress(peerId, filename, progress, totalSize, direction = 'send') {
-    // progress = -1 means cancelled
-    const transferId = `transfer-${direction}-${peerId}`;
-
-    if (progress === -1) {
-      // Transfer was cancelled by the other side
-      const item = document.getElementById(transferId);
-      if (item) {
-        const pText = item.querySelector('.transfer-percent');
-        const cancelBtn = item.querySelector('.btn-cancel-transfer');
-        if (pText) pText.textContent = '❌ Cancelled';
-        if (cancelBtn) cancelBtn.remove();
-      }
-      this.showToast(`Transfer cancelled`);
-      this.setPeerStatus(peerId, 'Ready to receive');
-      return;
-    }
-
-    this.showTransferSheet();
-    this.transferTitle.textContent = "Transfers in Progress";
-    if (this.clearTransfersBtn) this.clearTransfersBtn.style.display = 'block';
-
-    let item = document.getElementById(transferId);
-    const dirLabel = direction === 'send' ? '⬆ Sending' : '⬇ Receiving';
-
-    if (!item) {
-      this.transferStatus.style.display = 'none';
-      item = document.createElement('div');
-      item.className = 'transfer-item';
-      item.id = transferId;
-      item.innerHTML = `
-        <div class="transfer-header">
-          <span class="transfer-direction">${dirLabel}</span>
-          <span class="transfer-name"></span>
-          <span class="transfer-percent">0%</span>
-          <button class="btn-cancel-transfer" title="Cancel">✕</button>
-        </div>
-        <div class="transfer-progress-bar">
-          <div class="transfer-progress-fill ${direction === 'receive' ? 'receive' : ''}"></div>
-        </div>
-      `;
-      
-      item.querySelector('.transfer-name').textContent = filename;
-
-      // Wire cancel button
-      const cancelBtn = item.querySelector('.btn-cancel-transfer');
-      cancelBtn.addEventListener('click', () => {
-        if (this.onCancelTransfer) this.onCancelTransfer(peerId, direction);
-        const pText = item.querySelector('.transfer-percent');
-        if (pText) pText.textContent = '❌ Cancelled';
-        cancelBtn.remove();
-      });
-
-      this.transferContent.appendChild(item);
-    } else {
-      item.querySelector('.transfer-name').textContent = filename;
-    }
-
-    const pFill = item.querySelector('.transfer-progress-fill');
-    const pText = item.querySelector('.transfer-percent');
-
-    pFill.style.width = `${progress}%`;
-    pText.textContent = `${Math.round(progress)}%`;
-
-    if (progress >= 100) {
-      // Remove cancel button when done
-      const cancelBtn = item.querySelector('.btn-cancel-transfer');
-      if (cancelBtn) cancelBtn.remove();
-
-      setTimeout(() => {
-        if (item) {
-          if (direction === 'send') {
-            pText.textContent = 'Waiting for ACK...';
-          } else {
-            pText.innerHTML = '✅ Received!';
-            pFill.classList.add('done');
-          }
-        }
-      }, 300);
-    }
-  }
-
-  markTransferComplete(peerId, filename, direction) {
-    const transferId = `transfer-${direction}-${peerId}`;
-    const item = document.getElementById(transferId);
-    if (item) {
-      const pText = item.querySelector('.transfer-percent');
-      const pFill = item.querySelector('.transfer-progress-fill');
-      if (direction === 'send') {
-        pText.innerHTML = '✅ Sent!';
-        pFill.classList.add('done');
-      }
-    }
-    this.setPeerStatus(peerId, 'Ready to receive');
-  }
-
+  // --- Transfer Management ---
   showTransferSheet() {
     this.transferSheet.classList.add('open');
     // Push footer above the sheet
     const footer = document.getElementById('appFooter');
     if (footer) footer.style.paddingBottom = '260px';
+
+    // Enable smooth scrolling
+    this.transferContent.style.scrollBehavior = 'smooth';
   }
 
   hideTransferSheet() {
     this.transferSheet.classList.remove('open');
     const footer = document.getElementById('appFooter');
     if (footer) footer.style.paddingBottom = '30px';
+  }
+
+  /**
+   * Update progress for a file transfer
+   * @param {string} peerId - The peer ID
+   * @param {string} filename - The filename
+   * @param {number} progress - Progress percentage (0-100) or -1 for cancelled
+   * @param {number} totalSize - Total file size in bytes
+   * @param {'send'|'receive'} direction - Transfer direction
+   */
+  updateProgress(peerId, filename, progress, totalSize, direction = 'send') {
+    // Generate a unique transfer ID based on peer, direction, and filename
+    // Using a hash-like approach to avoid excessively long IDs
+    const transferId = `transfer-${peerId}-${direction}-${filename}`;
+
+    // Handle cancellation
+    if (progress === -1) {
+      // Remove the transfer if it exists
+      if (this.activeTransfers.has(transferId)) {
+        const transferData = this.activeTransfers.get(transferId);
+        if (transferData.item && transferData.item.parentNode) {
+          transferData.item.remove();
+        }
+        this.activeTransfers.delete(transferId);
+
+        // Update UI if no active transfers
+        if (this.activeTransfers.size === 0) {
+          this.transferStatus.style.display = 'block';
+          this.transferTitle.textContent = "Ready to Transfer";
+          if (this.clearTransfersBtn) this.clearTransfersBtn.style.display = 'none';
+        }
+      }
+
+      this.showToast(`Transfer cancelled`);
+      this.setPeerStatus(peerId, 'Ready to receive');
+      return;
+    }
+
+    // Show transfer sheet if there are active transfers
+    if (this.activeTransfers.size > 0) {
+      this.showTransferSheet();
+      this.transferTitle.textContent = "Transfers in Progress";
+      if (this.clearTransfersBtn) this.clearTransfersBtn.style.display = 'block';
+      this.transferStatus.style.display = 'none';
+    }
+
+    // Create or update transfer item
+    let transferData = this.activeTransfers.get(transferId);
+    let item;
+
+    if (!transferData) {
+      // Create new transfer item
+      item = this.createTransferItem(peerId, direction, filename);
+      transferData = {
+        peerId,
+        filename,
+        direction,
+        progress: 0,
+        totalSize,
+        item
+      };
+      this.activeTransfers.set(transferId, transferData);
+      this.transferContent.appendChild(item);
+    } else {
+      // Update existing transfer data
+      transferData.progress = progress;
+      transferData.totalSize = totalSize;
+      item = transferData.item;
+    }
+
+    // Update the UI for this transfer
+    this.updateTransferItemUI(item, peerId, direction, filename, progress, totalSize);
+  }
+
+  /**
+   * Create a new transfer item element
+   */
+  createTransferItem(peerId, direction, filename) {
+    const transferId = `transfer-${peerId}-${direction}-${filename}`;
+    const dirLabel = direction === 'send' ? '⬆ Sending' : '⬇ Receiving';
+
+    const item = document.createElement('div');
+    item.className = 'transfer-item';
+    item.id = transferId;
+    item.innerHTML = `
+      <div class="transfer-header">
+        <span class="transfer-direction">${dirLabel}</span>
+        <span class="transfer-name" title="${filename}">${this.truncateFilename(filename)}</span>
+        <span class="transfer-percent">0%</span>
+        <button class="btn-cancel-transfer" title="Cancel">✕</button>
+      </div>
+      <div class="transfer-progress-bar">
+        <div class="transfer-progress-fill ${direction === 'receive' ? 'receive' : ''}"></div>
+      </div>
+    `;
+
+    // Wire cancel button
+    const cancelBtn = item.querySelector('.btn-cancel-transfer');
+    cancelBtn.addEventListener('click', () => {
+      if (this.onCancelTransfer) {
+        this.onCancelTransfer(peerId, direction);
+      }
+
+      // Mark as cancelled in our tracking
+      if (this.activeTransfers.has(transferId)) {
+        const transferData = this.activeTransfers.get(transferId);
+        transferData.progress = -1; // Mark as cancelled
+        this.updateProgress(peerId, filename, -1, transferData.totalSize, direction);
+      }
+    });
+
+    return item;
+  }
+
+  /**
+   * Update the UI of a transfer item
+   */
+  updateTransferItemUI(item, peerId, direction, filename, progress, totalSize) {
+    const pFill = item.querySelector('.transfer-progress-fill');
+    const pText = item.querySelector('.transfer-percent');
+    const dirLabel = direction === 'send' ? '⬆ Sending' : '⬇ Receiving';
+    const nameSpan = item.querySelector('.transfer-name');
+
+    // Update direction label
+    const dirSpan = item.querySelector('.transfer-direction');
+    if (dirSpan) dirSpan.textContent = dirLabel;
+
+    // Update filename (with truncation for display)
+    if (nameSpan) {
+      nameSpan.title = filename; // Full filename on tooltip
+      nameSpan.textContent = this.truncateFilename(filename);
+    }
+
+    // Update progress bar and text
+    if (pFill) pFill.style.width = `${progress}%`;
+    if (pText) pText.textContent = `${Math.round(progress)}%`;
+
+    // Handle completion states
+    if (progress >= 100) {
+      // Remove cancel button when done
+      const cancelBtn = item.querySelector('.btn-cancel-transfer');
+      if (cancelBtn) cancelBtn.remove();
+
+      // Update completion message based on direction
+      setTimeout(() => {
+        if (item && item.parentNode) { // Check if item still exists
+          if (direction === 'send') {
+            if (pText) pText.textContent = '✅ Sent';
+          } else {
+            if (pText) pText.textContent = '✅ Received';
+            if (pFill) pFill.classList.add('done');
+          }
+        }
+      }, 300);
+    }
+  }
+
+  /**
+   * Truncate filename for display in UI
+   */
+  truncateFilename(filename, maxLength = 20) {
+    if (!filename) return '';
+    if (filename.length <= maxLength) return filename;
+    return filename.slice(0, maxLength - 1) + '…';
+  }
+
+  /**
+   * Mark a transfer as complete (called when transfer finishes)
+   */
+  markTransferComplete(peerId, filename, direction) {
+    // The updateProgress method with progress >= 100 will handle the UI update
+    // We just need to ensure the final state is set
+    const transferId = `transfer-${peerId}-${direction}-${filename}`;
+    if (this.activeTransfers.has(transferId)) {
+      const transferData = this.activeTransfers.get(transferId);
+      // Update to 100% to trigger completion state
+      this.updateProgress(peerId, filename, 100, transferData.totalSize, direction);
+    }
+
+    // Show toast notification
+    const peerName = peerId.substring(0, 8) + '...'; // Fallback if metadata not available
+    // TODO: Get actual peer name from metadata if available
+
+    if (direction === 'send') {
+      this.showToast(`✅ "${filename}" sent!`);
+    } else {
+      this.showToast(`📥 "${filename}" received!`);
+    }
+
+    this.setPeerStatus(peerId, 'Ready to receive');
+  }
+
+  /**
+   * Clear all completed transfers from the UI
+   */
+  clearCompletedTransfers() {
+    this.activeTransfers.forEach((transferData, transferId) => {
+      const item = transferData.item;
+      if (item && item.parentNode) {
+        // Check if transfer is complete (progress >= 100)
+        if (transferData.progress >= 100) {
+          item.remove();
+          this.activeTransfers.delete(transferId);
+        }
+      }
+    });
+
+    // Update UI if no active transfers remain
+    if (this.activeTransfers.size === 0) {
+      this.transferStatus.style.display = 'block';
+      this.transferTitle.textContent = "Ready to Transfer";
+      if (this.clearTransfersBtn) this.clearTransfersBtn.style.display = 'none';
+    }
   }
 }

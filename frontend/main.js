@@ -120,6 +120,10 @@ function init() {
       } else {
         uiManager.showToast(`📥 "${filename}" received from ${peerName}!`);
       }
+      // Notify WebRTC manager about transfer completion for wake lock management
+      if (webrtcManager._decrementActiveTransfers) {
+        webrtcManager._decrementActiveTransfers();
+      }
     }
   );
 
@@ -132,6 +136,10 @@ function init() {
     } else {
       uiManager.setPeerStatus(peerId, `Receiving "${filename}"...`);
       uiManager.showToast(`⬇ Receiving "${filename}" from ${peerName}...`);
+    }
+    // Notify WebRTC manager about transfer start for wake lock management
+    if (webrtcManager._incrementActiveTransfers) {
+      webrtcManager._incrementActiveTransfers();
     }
   };
 
