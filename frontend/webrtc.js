@@ -180,7 +180,7 @@ export class WebRTCManager {
   setupChannel(peerId, channel) {
     channel.binaryType = 'arraybuffer';
     if (typeof channel.bufferedAmountLowThreshold !== 'undefined') {
-      channel.bufferedAmountLowThreshold = 4 * 1024 * 1024;
+      channel.bufferedAmountLowThreshold = 16 * 1024 * 1024;
     }
     this.channels.set(peerId, channel);
 
@@ -435,7 +435,7 @@ export class WebRTCManager {
       reader.readAsArrayBuffer(slice);
     };
 
-    channel.bufferedAmountLowThreshold = 4 * 1024 * 1024;
+    channel.bufferedAmountLowThreshold = 16 * 1024 * 1024;
     readSlice(0);
   }
 
