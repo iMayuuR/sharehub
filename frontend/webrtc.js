@@ -79,11 +79,9 @@ export class WebRTCManager {
         { urls: 'stun:stun.rixtelecom.se' },
         { urls: 'stun:stun.ekiga.net' },
         { urls: 'stun:stun.freeswitch.org' },
-        { urls: 'stun:stun.l.google.com:19302?transport=udp' },
 
         // STUN servers with IPv6 support
-        { urls: 'stun:[2a01:4f8:c2c:123f::1]:3478' },
-        { urls: 'stun:[2a01:4f8:c2c:123f::1]:3478?transport=udp' }
+        { urls: 'stun:[2a01:4f8:c2c:123f::1]:3478' }
       ],
       // TURN servers for relay fallback when direct connection fails
       // Using multiple TURN providers for better reliability
