@@ -1,4 +1,4 @@
-// signaling.js
+// signaling.js - Enhanced logging for debugging
 
 // Cache public IP for 1 hour to avoid repeated fetches
 let _cachedPublicIp = null;
@@ -8,9 +8,11 @@ const CACHE_DURATION_MS = 3600000; // 1 hour
 async function getPublicIp() {
   // Return cached IP if still valid
   if (_cachedPublicIp && (Date.now() - _cacheTimestamp) < CACHE_DURATION_MS) {
+    console.log(`[Signaling] Using cached public IP: ${_cachedPublicIp}`);
     return _cachedPublicIp;
   }
 
+  console.log('[Signaling] Fetching public IP...');
   const apis = [
     'https://api4.ipify.org?format=json', // Force IPv4 for better NAT matching
     'https://api.ipify.org?format=json',
@@ -29,10 +31,15 @@ async function getPublicIp() {
       if (ip) {
         _cachedPublicIp = ip;
         _cacheTimestamp = Date.now();
+        console.log(`[Signaling] Public IP fetched: ${ip}`);
         return ip;
       }
-    } catch { continue; }
+    } catch (err) {
+      console.warn(`[Signaling] Failed to fetch IP from ${api}:`, err.message);
+      continue;
+    }
   }
+  console.warn('[Signaling] Could not fetch public IP, using unknown');
   return 'unknown';
 }
 
@@ -55,6 +62,7 @@ export class SignalingClient {
   }
 
   async connect(roomId) {
+    console.log('[Signaling] Connecting to signaling server...');
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
@@ -80,22 +88,26 @@ export class SignalingClient {
     }
 
     if (this._roomId) url += `&roomId=${encodeURIComponent(this._roomId)}`;
-    
+
     // Auto-join last used room for "Same Network" feel
     const lastRoom = localStorage.getItem('sharehub_last_room');
     if (lastRoom && !this._roomId) {
       url += `&roomId=${encodeURIComponent(lastRoom)}`;
     }
 
+    console.log(`[Signaling] Connecting to URL: ${url}`);
+
     try {
       this.ws = new WebSocket(url);
-    } catch {
+    } catch (err) {
+      console.error('[Signaling] Failed to create WebSocket:', err);
       if (this.onConnectionChange) this.onConnectionChange('error');
       this._scheduleReconnect();
       return;
     }
 
     this.ws.onopen = () => {
+      console.log('[Signaling] WebSocket connected');
       if (this.onConnectionChange) this.onConnectionChange('connected');
       // Reset reconnect attempts on successful connection
       this._reconnectAttempts = 0;
@@ -104,35 +116,48 @@ export class SignalingClient {
     this.ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        //console.log('[Signaling] Received message:', data.type);
         switch (data.type) {
-          case 'connected': break;
+          case 'connected':
+            console.log('[Signaling] Received connected message');
+            break;
           case 'peers-list':
+            console.log(`[Signaling] Received peers list: ${data.peers.length} peers`);
             if (this.onPeersList) this.onPeersList(data.peers);
             break;
           case 'peer-joined':
+            console.log(`[Signaling] Peer joined: ${data.peerId}`);
             if (this.onPeerJoined) this.onPeerJoined(data.peerId);
             break;
           case 'peer-left':
+            console.log(`[Signaling] Peer left: ${data.peerId}`);
             if (this.onPeerLeft) this.onPeerLeft(data.peerId);
             break;
           case 'signal':
+            //console.log(`[Signaling] Signal received from: ${data.from}`);
             if (this.onSignal) this.onSignal(data.from, data.signal);
             break;
           case 'relay':
+            //console.log(`[Signaling] Relay received from: ${data.from}`);
             if (this.onRelay) this.onRelay(data.from, data.payload);
             break;
           case 'room-joined':
+            console.log(`[Signaling] Joined room: ${data.roomCode}`);
             if (this.onRoomJoined) this.onRoomJoined(data.roomCode);
             break;
         }
-      } catch {}
+      } catch (err) {
+        console.error('[Signaling] Error parsing WebSocket message:', err);
+      }
     };
 
-    this.ws.onerror = () => {
+    this.ws.onerror = (err) => {
+      console.error('[Signaling] WebSocket error:', err);
       if (this.onConnectionChange) this.onConnectionChange('error');
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
+      console.log(`[Signaling] WebSocket closed: code=${event.code}, reason=${event.reason}`);
       if (this.onConnectionChange) this.onConnectionChange('disconnected');
       if (!this._intentionalClose) this._scheduleReconnect();
     };

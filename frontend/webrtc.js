@@ -1,4 +1,4 @@
-// webrtc.js
+// webrtc.js - Enhanced logging for debugging
 
 const CHUNK_SIZE = 256 * 1024;
 const RELAY_CHUNK_SIZE = 16 * 1024;
@@ -149,7 +149,9 @@ export class WebRTCManager {
         this._makingOffer.set(peerId, true);
         await pc.setLocalDescription();
         this.signalingClient.sendSignal(peerId, { sdp: pc.localDescription });
-      } catch {} finally {
+      } catch (err) {
+        console.error('WebRTC signal handling error:', err);
+      } finally {
         this._makingOffer.set(peerId, false);
       }
     };
@@ -222,7 +224,9 @@ export class WebRTCManager {
           await pc.setLocalDescription();
           this.signalingClient.sendSignal(peerId, { sdp: pc.localDescription });
         }
-      } catch {}
+      } catch (err) {
+        console.error('WebRTC signal handling error:', err);
+      }
 
     } else if (signal.candidate) {
       try {
@@ -234,7 +238,9 @@ export class WebRTCManager {
           pending.push(new RTCIceCandidate(signal.candidate));
           this._pendingCandidates.set(peerId, pending);
         }
-      } catch {}
+      } catch (err) {
+        console.error('WebRTC signal handling error:', err);
+      }
     }
   }
 
@@ -323,6 +329,7 @@ export class WebRTCManager {
 
     // Check if we have an open channel
     if (channel && channel.readyState === 'open') {
+      console.log(`[WebRTC] Open channel found for peer ${peerId}, using direct connection`);
       // Direct connection available - use it immediately
       this._sendFileDirect(peerId, file);
       return;
@@ -330,12 +337,14 @@ export class WebRTCManager {
 
     // No direct connection - try to establish one
     if (retryCount === 0) {
+      console.log(`[WebRTC] No open channel for peer ${peerId}, attempting to establish direct connection (attempt ${retryCount + 1})`);
       this.preConnect(peerId);
 
       // Set up a timeout to fall back to relay if direct connection takes too long
       const timeoutId = setTimeout(() => {
         if (this.channels.get(peerId)?.readyState !== 'open') {
           // Direct connection failed or taking too long, warn and fall back to relay
+          console.log(`[WebRTC] Direct connection timeout for peer ${peerId}, falling back to relay`);
           this._warnAboutRelayUsage(peerId, file.size);
           this.sendFileRelay(peerId, file);
           this._connectionTimeouts.delete(peerId);
@@ -344,6 +353,7 @@ export class WebRTCManager {
 
       this._connectionTimeouts.set(peerId, timeoutId);
     } else if (retryCount < 4) {
+      console.log(`[WebRTC] Retrying direct connection for peer ${peerId} (attempt ${retryCount + 1})`);
       setTimeout(() => this.sendFile(peerId, file, retryCount + 1), 2000);
     } else {
       // Clear timeout if it exists
@@ -353,6 +363,7 @@ export class WebRTCManager {
       }
 
       // Warn user about potential data usage when falling back to relay
+      console.log(`[WebRTC] Max retries reached for peer ${peerId}, falling back to relay`);
       this._warnAboutRelayUsage(peerId, file.size);
       this.sendFileRelay(peerId, file);
     }
@@ -361,8 +372,11 @@ export class WebRTCManager {
   _sendFileDirect(peerId, file) {
     const channel = this.channels.get(peerId);
     if (!channel || channel.readyState !== 'open') {
+      console.warn(`[WebRTC] No open channel for peer ${peerId}, cannot send file directly`);
       return;
     }
+
+    console.log(`[WebRTC] Starting direct file transfer to peer ${peerId}: ${file.name} (${file.size} bytes)`);
 
     const fileName = ensureExtension(file.name, file.type);
     const sendState = { cancelled: false, filename: fileName };
@@ -380,6 +394,7 @@ export class WebRTCManager {
     reader.onload = (e) => {
       const sendNextChunk = () => {
         if (sendState.cancelled) {
+          console.log(`[WebRTC] File send cancelled for peer ${peerId}`);
           this.activeSends.delete(peerId);
           return;
         }

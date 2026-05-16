@@ -196,11 +196,13 @@ function init() {
   }
 
   // Keepalive ping — prevents Render free tier from sleeping (13 min interval)
-  const signalingUrl = import.meta.env.VITE_SIGNALING_URL;
+  const signalingUrl = import.meta.env.VITE_SIGNALING_URL || (window.location.origin.includes('localhost') ? 'http://localhost:3002' : window.location.origin);
   if (signalingUrl) {
     const ping = () => fetch(`${signalingUrl}/health`).catch(() => {});
     ping();
     setInterval(ping, 13 * 60 * 1000);
+  } else {
+    console.warn('VITE_SIGNALING_URL not set, WebSocket connection may fail');
   }
 
   // Mobile: reconnect WebSocket when app comes back to foreground
