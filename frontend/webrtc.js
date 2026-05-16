@@ -1,7 +1,7 @@
 // webrtc.js - Enhanced logging for debugging
 
-const CHUNK_SIZE = 256 * 1024;
-const RELAY_CHUNK_SIZE = 16 * 1024;
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB
+const RELAY_CHUNK_SIZE = 256 * 1024; // 256KB
 
 // Extension recovery for files missing extensions (Android gallery)
 const MIME_TO_EXT = {
@@ -170,7 +170,9 @@ export class WebRTCManager {
     if (!this._isPolite(peerId)) {
       const channel = pc.createDataChannel('fileTransfer', {
         ordered: true,
-        maxRetransmits: 30
+        maxRetransmits: 0, // Disable retransmits for speed; rely on application-level retry if needed
+        maxPacketLifeTime: 500, // 0.5 seconds
+        negotiated: false
       });
       this.setupChannel(peerId, channel);
     }
@@ -179,7 +181,7 @@ export class WebRTCManager {
   setupChannel(peerId, channel) {
     channel.binaryType = 'arraybuffer';
     if (typeof channel.bufferedAmountLowThreshold !== 'undefined') {
-      channel.bufferedAmountLowThreshold = 2 * 1024 * 1024;
+      channel.bufferedAmountLowThreshold = 4 * 1024 * 1024;
     }
     this.channels.set(peerId, channel);
 
@@ -434,7 +436,7 @@ export class WebRTCManager {
       reader.readAsArrayBuffer(slice);
     };
 
-    channel.bufferedAmountLowThreshold = 2 * 1024 * 1024;
+    channel.bufferedAmountLowThreshold = 4 * 1024 * 1024;
     readSlice(0);
   }
 
@@ -538,19 +540,15 @@ export class WebRTCManager {
   }
 
   // Pause all active transfers (called when app goes to background/screen off)
+  // We keep transfers active; only UI updates might be affected.
   pauseTransfers() {
-    // We don't actually pause WebRTC data transfers as they're peer-to-peer
-    // but we can pause any UI updates or processing if needed
-    // For now, we'll just log that we're entering background mode
-    console.log('Entering background mode - transfers will continue but UI updates may be paused');
-    // Note: We rely on Wake Lock to keep the screen awake, but if the page is hidden,
-    // browsers may still throttle timers. We'll show a notification in main.js.
+    // No-op: transfers continue via WebRTC data channels; wake lock keeps screen awake.
   }
 
   // Resume all transfers (when app comes to foreground)
+  // No-op: transfers were never paused.
   resumeTransfers() {
-    // Resume any UI updates or processing
-    console.log('Resuming from background mode');
+    // No-op
   }
 
   // Track active transfers for wake lock management
