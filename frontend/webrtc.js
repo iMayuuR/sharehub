@@ -359,33 +359,33 @@ export class WebRTCManager {
   }
 
   _sendFileDirect(peerId, file) {
-    var channel = this.channels.get(peerId);
+    const channel = this.channels.get(peerId);
     if (!channel || channel.readyState !== 'open') {
       return;
     }
 
-    var fileName = ensureExtension(file.name, file.type);
-    var sendState = { cancelled: false, filename: fileName };
+    const fileName = ensureExtension(file.name, file.type);
+    const sendState = { cancelled: false, filename: fileName };
     this.activeSends.set(peerId, sendState);
 
     if (this.onTransferStart) this.onTransferStart(peerId, fileName, 'send');
 
-    var header = { type: 'header', name: fileName, size: file.size, mimeType: file.type };
+    const header = { type: 'header', name: fileName, size: file.size, mimeType: file.type };
     channel.send(JSON.stringify(header));
     if (this.onProgress) this.onProgress(peerId, fileName, 0, file.size, 'send');
 
-    var offset = 0;
-    var reader = new FileReader();
+    let offset = 0;
+    const reader = new FileReader();
 
-    reader.onload = function(e) {
-      var sendNextChunk = function() {
+    reader.onload = (e) => {
+      const sendNextChunk = () => {
         if (sendState.cancelled) {
           this.activeSends.delete(peerId);
           return;
         }
 
         if (channel.bufferedAmount > channel.bufferedAmountLowThreshold) {
-          channel.onbufferedamountlow = function() {
+          channel.onbufferedamountlow = () => {
             channel.onbufferedamountlow = null;
             sendNextChunk();
           };
@@ -395,7 +395,7 @@ export class WebRTCManager {
         channel.send(e.target.result);
         offset += e.target.result.byteLength;
 
-        var progress = Math.min((offset / file.size) * 100, 100);
+        const progress = Math.min((offset / file.size) * 100, 100);
         if (this.onProgress) this.onProgress(peerId, fileName, progress, file.size, 'send');
 
         if (offset < file.size) {
@@ -408,16 +408,16 @@ export class WebRTCManager {
 
           // ACK timeout fallback: if no ACK in 8s, auto-complete
           // (handles edge case where ACK message is lost)
-          setTimeout(function() {
+          setTimeout(() => {
             if (this.onFileComplete) this.onFileComplete(peerId, fileName, 'send');
-          }.bind(this), 8000);
+          }, 8000);
         }
-      }.bind(this);
+      };
       sendNextChunk();
-    }.bind(this);
+    };
 
-    var readSlice = function(o) {
-      var slice = file.slice(o, o + CHUNK_SIZE);
+    const readSlice = (o) => {
+      const slice = file.slice(o, o + CHUNK_SIZE);
       reader.readAsArrayBuffer(slice);
     };
 
