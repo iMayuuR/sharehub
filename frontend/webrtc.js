@@ -170,7 +170,6 @@ export class WebRTCManager {
     if (!this._isPolite(peerId)) {
       const channel = pc.createDataChannel('fileTransfer', {
         ordered: true,
-        maxRetransmits: 0, // Disable retransmits for speed; rely on application-level retry if needed
         maxPacketLifeTime: 500, // 0.5 seconds
         negotiated: false
       });
