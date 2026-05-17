@@ -406,7 +406,22 @@ export class WebRTCManager {
           return;
         }
 
-        channel.send(e.target.result);
+        try {
+          channel.send(e.target.result);
+        } catch (err) {
+          // Handle RTCDataChannel send queue full error
+          if (err.name === 'OperationError' && err.message.includes('send queue is full')) {
+            // Wait for bufferedamountlow event before retrying
+            channel.onbufferedamountlow = () => {
+              channel.onbufferedamountlow = null;
+              sendNextChunk(); // Retry sending this chunk
+            };
+            return; // Important: return early so we don't update offset below
+          }
+          // Re-throw if it's a different error
+          throw err;
+        }
+
         offset += e.target.result.byteLength;
 
         const progress = Math.min((offset / file.size) * 100, 100);
