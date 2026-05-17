@@ -1,7 +1,7 @@
 // webrtc.js - Enhanced logging for debugging
 
-const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB
-const RELAY_CHUNK_SIZE = 256 * 1024; // 256KB
+const CHUNK_SIZE = 256 * 1024; // 256KB
+const RELAY_CHUNK_SIZE = 64 * 1024; // 64KB
 
 // Extension recovery for files missing extensions (Android gallery)
 const MIME_TO_EXT = {
