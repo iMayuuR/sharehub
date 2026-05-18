@@ -1,7 +1,9 @@
 // webrtc.js - Enhanced logging for debugging
 
-const CHUNK_SIZE = 256 * 1024; // 256KB
-const RELAY_CHUNK_SIZE = 64 * 1024; // 64KB
+// 2MB chunks for direct transfers — local network high throughput
+const CHUNK_SIZE = 2 * 1024 * 1024;
+// 256KB relay chunks (base64 overhead is ~33%, keep smaller)
+const RELAY_CHUNK_SIZE = 256 * 1024;
 
 // Extension recovery for files missing extensions (Android gallery)
 const MIME_TO_EXT = {
@@ -33,12 +35,13 @@ export class WebRTCManager {
     this.channels = new Map();
     this.incomingFiles = new Map();
     this.activeSends = new Map();
-    this._makingOffer = new Map(); // Track offer creation per peer
-    this._pendingCandidates = new Map(); // Buffer candidates until remote desc is set
-    this._relayWarningShown = new Set(); // Track which peers we've warned about relay usage
-    this._connectionTimeouts = new Map(); // Track connection timeouts per peer
-    this.activeTransferCount = 0; // Track number of active transfers for wake lock
-    this.wakeLock = null; // Wake Lock handle
+    this._makingOffer = new Map();
+    this._pendingCandidates = new Map();
+    this._relayWarningShown = new Set();
+    this._connectionTimeouts = new Map();
+    this.activeTransferCount = 0;
+    this.wakeLock = null;
+    this._pendingFiles = new Map(); // peerId → file currently being sent (for channel-close recovery)
   }
 
   // "Polite peer" pattern: The peer with the SMALLER ID is "polite"
@@ -170,7 +173,7 @@ export class WebRTCManager {
     if (!this._isPolite(peerId)) {
       const channel = pc.createDataChannel('fileTransfer', {
         ordered: true,
-        maxPacketLifeTime: 500, // 0.5 seconds
+        maxPacketLifeTime: 250, // 250ms max — faster delivery for local network
         negotiated: false
       });
       this.setupChannel(peerId, channel);
@@ -184,9 +187,24 @@ export class WebRTCManager {
     }
     this.channels.set(peerId, channel);
 
-    channel.onopen = () => {};
+    channel.onopen = () => {
+      // Resume any file that was mid-send when channel closed
+      const pending = this._pendingFiles.get(peerId);
+      if (pending) {
+        console.log(`[WebRTC] Resuming after channel reopen: ${pending.name}`);
+        this._enqueueFile(peerId, pending);
+        this._pendingFiles.delete(peerId);
+      }
+      this._processQueue(peerId);
+    };
     channel.onclose = () => {
       this.channels.delete(peerId);
+      // Don't shift queue — file stays in queue for resend
+      // Mark current file as pending so it's re-enqueued on reopen
+      const queue = this._fileQueues?.get(peerId);
+      if (queue && queue.length > 0) {
+        this._pendingFiles.set(peerId, queue[0]);
+      }
     };
     channel.onmessage = (event) => {
       this.handleIncomingData(peerId, event.data);
@@ -248,6 +266,18 @@ export class WebRTCManager {
       const meta = JSON.parse(data);
 
       if (meta.type === 'header') {
+        // Reject if a file is already being received from this peer (sequential only)
+        if (this.incomingFiles.has(peerId)) {
+          console.warn(`[WebRTC] Dropped header for "${meta.name}" — previous file still in progress from ${peerId}`);
+          return;
+        }
+        // Per-peer flow state for throughput feedback to sender
+        if (!this._flowState) this._flowState = new Map();
+        this._flowState.set(peerId, {
+          bytes: 0,
+          chunks: 0,
+          reportTime: Date.now()
+        });
         this.incomingFiles.set(peerId, {
           meta: meta,
           receivedSize: 0,
@@ -256,9 +286,30 @@ export class WebRTCManager {
         if (this.onTransferStart) this.onTransferStart(peerId, meta.name, 'receive');
         if (this.onProgress) this.onProgress(peerId, meta.name, 0, meta.size, 'receive');
 
+      } else if (meta.type === 'flow') {
+        // Sender-side: adaptive flow control from receiver feedback
+        this._adjustFlowControl(peerId, meta);
+        return;
+
       } else if (meta.type === 'done') {
         const fileData = this.incomingFiles.get(peerId);
         if (!fileData) return;
+
+        // Final throughput report to sender & cleanup flow state
+        if (this._flowState) {
+          const fl = this._flowState.get(peerId);
+          if (fl) {
+            const elapsed = (Date.now() - fl.reportTime) / 1000;
+            if (elapsed > 0) {
+              const mbps = (fileData.receivedSize / elapsed / 1024 / 1024).toFixed(2);
+              const ch = this.channels.get(peerId);
+              if (ch && ch.readyState === 'open') {
+                ch.send(JSON.stringify({ type: 'done', filename: fileData.meta.name, avgMbps: parseFloat(mbps) }));
+              }
+            }
+            this._flowState.delete(peerId);
+          }
+        }
 
         // Force progress to 100% (fixes 99% stuck from float rounding)
         if (this.onProgress) this.onProgress(peerId, fileData.meta.name, 100, fileData.meta.size, 'receive');
@@ -289,96 +340,134 @@ export class WebRTCManager {
         if (this.onFileComplete) this.onFileComplete(peerId, downloadName, 'receive');
 
       } else if (meta.type === 'ack') {
+        // Adjust flow control for future sends based on observed throughput
+        if (meta.avgMbps) this._adjustFlowControl(peerId, { mbps: meta.avgMbps });
         if (this.onFileComplete) this.onFileComplete(peerId, meta.filename, 'send');
 
       } else if (meta.type === 'cancel') {
         this.incomingFiles.delete(peerId);
+        if (this._flowState?.has(peerId)) this._flowState.delete(peerId);
         if (this.onProgress) this.onProgress(peerId, meta.filename || 'file', -1, 0, 'receive');
       }
 
     } else {
+      // Binary chunk
       const fileData = this.incomingFiles.get(peerId);
       if (fileData) {
         fileData.chunks.push(data);
         fileData.receivedSize += data.byteLength;
         const progress = Math.min((fileData.receivedSize / fileData.meta.size) * 100, 100);
         if (this.onProgress) this.onProgress(peerId, fileData.meta.name, progress, fileData.meta.size, 'receive');
+
+        // Update flow state and send periodic throughput report to sender
+        if (this._flowState) {
+          const fl = this._flowState.get(peerId);
+          if (fl) {
+            fl.bytes += data.byteLength;
+            fl.chunks++;
+            const elapsed = Date.now() - fl.reportTime;
+            if (elapsed >= 2000) { // Report every 2s
+              const mbps = (fl.bytes / (elapsed / 1000) / 1024 / 1024).toFixed(2);
+              const ch = this.channels.get(peerId);
+              if (ch && ch.readyState === 'open') {
+                ch.send(JSON.stringify({ type: 'flow', mbps: parseFloat(mbps), chunks: fl.chunks }));
+              }
+              fl.bytes = 0;
+              fl.chunks = 0;
+              fl.reportTime = Date.now();
+            }
+          }
+        }
       }
     }
-  }
-
-  cancelSend(peerId) {
-    const sendState = this.activeSends.get(peerId);
-    if (sendState) {
-      sendState.cancelled = true;
-      const channel = this.channels.get(peerId);
-      if (channel && channel.readyState === 'open') {
-        channel.send(JSON.stringify({ type: 'cancel', filename: sendState.filename }));
-      }
-      this.activeSends.delete(peerId);
-    }
-  }
-
-  cancelReceive(peerId) {
-    this.incomingFiles.delete(peerId);
   }
 
   sendFile(peerId, file, retryCount = 0) {
     const channel = this.channels.get(peerId);
 
-    // Check if we have an open channel
     if (channel && channel.readyState === 'open') {
-      console.log(`[WebRTC] Open channel found for peer ${peerId}, using direct connection`);
-      // Direct connection available - use it immediately
-      this._sendFileDirect(peerId, file);
+      // Direct connection — enqueue for sequential multi-file transfer
+      console.log(`[WebRTC] Open channel for ${peerId}, queuing: ${file.name}`);
+      this._enqueueFile(peerId, file);
       return;
     }
-
-    // No direct connection - try to establish one
+    // No open channel
     if (retryCount === 0) {
-      console.log(`[WebRTC] No open channel for peer ${peerId}, attempting to establish direct connection (attempt ${retryCount + 1})`);
+      console.log(`[WebRTC] No channel for ${peerId}, establishing...`);
       this.preConnect(peerId);
+      this._enqueueFile(peerId, file);
 
-      // Set up a timeout to fall back to relay if direct connection takes too long
       const timeoutId = setTimeout(() => {
         if (this.channels.get(peerId)?.readyState !== 'open') {
-          // Direct connection failed or taking too long, warn and fall back to relay
-          console.log(`[WebRTC] Direct connection timeout for peer ${peerId}, falling back to relay`);
-          this._warnAboutRelayUsage(peerId, file.size);
-          this.sendFileRelay(peerId, file);
-          this._connectionTimeouts.delete(peerId);
+          console.log(`[WebRTC] Channel not open after 5s, retrying...`);
+          this.sendFile(peerId, file, 1);
         }
-      }, 5000); // 5 second timeout for direct connection attempt
-
-      this._connectionTimeouts.set(peerId, timeoutId);
-    } else if (retryCount < 4) {
-      console.log(`[WebRTC] Retrying direct connection for peer ${peerId} (attempt ${retryCount + 1})`);
-      setTimeout(() => this.sendFile(peerId, file, retryCount + 1), 2000);
-    } else {
-      // Clear timeout if it exists
-      if (this._connectionTimeouts.has(peerId)) {
-        clearTimeout(this._connectionTimeouts.get(peerId));
         this._connectionTimeouts.delete(peerId);
-      }
+      }, 5000);
+      this._connectionTimeouts.set(peerId, timeoutId);
 
-      // Warn user about potential data usage when falling back to relay
-      console.log(`[WebRTC] Max retries reached for peer ${peerId}, falling back to relay`);
+    } else if (retryCount < 4) {
+      console.log(`[WebRTC] Retry ${retryCount} for ${peerId}`);
+      this.preConnect(peerId);
+      // No re-enqueue: file already queued from first sendFile call.
+      // channel.onopen → _processQueue will pick it up.
+      setTimeout(() => this.sendFile(peerId, file, retryCount + 1), 2000);
+
+    } else {
+      // Max retries — clear direct queue and fall to relay
+      if (this._fileQueues?.has(peerId)) {
+        const q = this._fileQueues.get(peerId);
+        // Remove the specific file from queue (it's the first one)
+        const idx = q.findIndex(f => f === file);
+        if (idx !== -1) q.splice(idx, 1);
+      }
+      console.log(`[WebRTC] Max retries for ${peerId}, relay fallback`);
       this._warnAboutRelayUsage(peerId, file.size);
       this.sendFileRelay(peerId, file);
     }
   }
 
-  _sendFileDirect(peerId, file) {
+  // Per-peer file queue — ensures multiple files are sent sequentially
+  _enqueueFile(peerId, file) {
+    if (!this._fileQueues) this._fileQueues = new Map();
+    if (!this._fileQueues.has(peerId)) this._fileQueues.set(peerId, []);
+    this._fileQueues.get(peerId).push(file);
+    // Kick off processing if this is the only file in queue
+    if (this._fileQueues.get(peerId).length === 1) {
+      this._processQueue(peerId);
+    }
+  }
+
+  _processQueue(peerId) {
+    const queue = this._fileQueues.get(peerId);
+    if (!queue || queue.length === 0) return;
+
+    const channel = this.channels.get(peerId);
+    if (!channel || channel.readyState !== 'open') return;
+
+    const file = queue[0];
+    this._sendFileDirect(peerId, file, () => {
+      // on done callback — dequeue and process next
+      queue.shift();
+      this._processQueue(peerId);
+    });
+  }
+
+  _sendFileDirect(peerId, file, onDone) {
     const channel = this.channels.get(peerId);
     if (!channel || channel.readyState !== 'open') {
-      console.warn(`[WebRTC] No open channel for peer ${peerId}, cannot send file directly`);
+      // Channel closed — DON'T shift queue. _processQueue will retry when channel reopens.
+      console.warn(`[WebRTC] Channel not open for ${peerId}, will retry on reopen`);
       return;
     }
 
-    console.log(`[WebRTC] Starting direct file transfer to peer ${peerId}: ${file.name} (${file.size} bytes)`);
-
     const fileName = ensureExtension(file.name, file.type);
-    const sendState = { cancelled: false, filename: fileName };
+    const fc = this._flowCtrl?.get(peerId);
+    const threshold = fc?.threshold || (16 * 1024 * 1024);
+    channel.bufferedAmountLowThreshold = threshold;
+    console.log(`[WebRTC] Starting direct send to ${peerId}: ${fileName} (${file.size} bytes, threshold=${(threshold/1024/1024).toFixed(1)}MB)`);
+
+    const sendState = { cancelled: false };
     this.activeSends.set(peerId, sendState);
 
     if (this.onTransferStart) this.onTransferStart(peerId, fileName, 'send');
@@ -388,72 +477,99 @@ export class WebRTCManager {
     if (this.onProgress) this.onProgress(peerId, fileName, 0, file.size, 'send');
 
     let offset = 0;
+    let prefetchBuf = null; // Read-ahead buffer
+    let prefetchOffset = 0;
     const reader = new FileReader();
+    const fileReader2 = new FileReader(); // Second reader for prefetch
 
-    reader.onload = (e) => {
-      const sendNextChunk = () => {
-        if (sendState.cancelled) {
-          console.log(`[WebRTC] File send cancelled for peer ${peerId}`);
-          this.activeSends.delete(peerId);
-          return;
-        }
+    // Read first chunk synchronously
+    const firstSlice = file.slice(0, CHUNK_SIZE);
+    reader.readAsArrayBuffer(firstSlice);
 
-        if (channel.bufferedAmount > channel.bufferedAmountLowThreshold) {
+    const readNextInto = (targetReader, o) => {
+      const slice = file.slice(o, o + CHUNK_SIZE);
+      targetReader.readAsArrayBuffer(slice);
+    };
+
+    // Prefetch next chunk while current one sends
+    const prefetchNext = () => {
+      if (prefetchOffset < file.size) {
+        readNextInto(fileReader2, prefetchOffset);
+      }
+    };
+
+    // Start prefetching immediately
+    prefetchOffset = CHUNK_SIZE;
+    prefetchNext();
+
+    const sendChunk = (buf) => {
+      if (sendState.cancelled) {
+        console.log(`[WebRTC] Send cancelled for ${peerId}`);
+        this.activeSends.delete(peerId);
+        if (onDone) onDone();
+        return;
+      }
+
+      if (channel.bufferedAmount > channel.bufferedAmountLowThreshold) {
+        const handler = () => {
+          channel.onbufferedamountlow = null;
+          sendChunk(buf);
+        };
+        channel.onbufferedamountlow = handler;
+        return;
+      }
+
+      try {
+        channel.send(buf);
+      } catch (err) {
+        if (err.name === 'OperationError' && err.message.includes('send queue is full')) {
           channel.onbufferedamountlow = () => {
             channel.onbufferedamountlow = null;
-            sendNextChunk();
+            sendChunk(buf);
           };
           return;
         }
+        throw err;
+      }
 
-        try {
-          channel.send(e.target.result);
-        } catch (err) {
-          // Handle RTCDataChannel send queue full error
-          if (err.name === 'OperationError' && err.message.includes('send queue is full')) {
-            // Wait for bufferedamountlow event before retrying
-            channel.onbufferedamountlow = () => {
-              channel.onbufferedamountlow = null;
-              sendNextChunk(); // Retry sending this chunk
-            };
-            return; // Important: return early so we don't update offset below
-          }
-          // Re-throw if it's a different error
-          throw err;
-        }
+      offset += buf.byteLength;
+      const progress = Math.min((offset / file.size) * 100, 100);
+      if (this.onProgress) this.onProgress(peerId, fileName, progress, file.size, 'send');
 
-        offset += e.target.result.byteLength;
+      if (offset >= file.size) {
+        if (this.onProgress) this.onProgress(peerId, fileName, 100, file.size, 'send');
+        channel.send(JSON.stringify({ type: 'done' }));
+        this.activeSends.delete(peerId);
+        setTimeout(() => {
+          if (this.onFileComplete) this.onFileComplete(peerId, fileName, 'send');
+          if (onDone) onDone();
+        }, 8000);
+        return;
+      }
 
-        const progress = Math.min((offset / file.size) * 100, 100);
-        if (this.onProgress) this.onProgress(peerId, fileName, progress, file.size, 'send');
+      // Use prefetched buffer, then read new chunk
+      if (prefetchBuf) {
+        const tmp = prefetchBuf;
+        prefetchBuf = null;
 
-        if (offset < file.size) {
-          readSlice(offset);
-        } else {
-          // Force sender progress to exactly 100%
-          if (this.onProgress) this.onProgress(peerId, fileName, 100, file.size, 'send');
-          channel.send(JSON.stringify({ type: 'done' }));
-          this.activeSends.delete(peerId);
+        // Read next into the OTHER reader while we send prefetched
+        readNextInto(fileReader2, prefetchOffset);
+        prefetchOffset += CHUNK_SIZE;
 
-          // ACK timeout fallback: if no ACK in 8s, auto-complete
-          // (handles edge case where ACK message is lost)
-          setTimeout(() => {
-            if (this.onFileComplete) this.onFileComplete(peerId, fileName, 'send');
-          }, 8000);
-        }
-      };
-      sendNextChunk();
+        sendChunk(tmp);
+      } else {
+        // No prefetch — block on read (fallback, rare)
+        reader.readAsArrayBuffer(file.slice(offset, offset + CHUNK_SIZE));
+      }
     };
 
-    const readSlice = (o) => {
-      const slice = file.slice(o, o + CHUNK_SIZE);
-      reader.readAsArrayBuffer(slice);
-    };
+    // Main reader: when first chunk is ready, start sending and prefetch
+    reader.onload = (e) => sendChunk(e.target.result);
 
-    channel.bufferedAmountLowThreshold = 16 * 1024 * 1024;
-    readSlice(0);
+    fileReader2.onload = (e) => {
+      prefetchBuf = e.target.result;
+    };
   }
-
 
   arrayBufferToBase64(buffer) {
     let binary = '';
@@ -465,33 +581,89 @@ export class WebRTCManager {
   handleRelayData(peerId, rawPayload) {
     let msg;
     try { msg = JSON.parse(rawPayload); } catch { return; }
-    if (msg.type === 'header' || msg.type === 'done' || msg.type === 'ack' || msg.type === 'cancel') {
+    if (msg.type === 'header' || msg.type === 'done' || msg.type === 'ack' || msg.type === 'cancel' || msg.type === 'flow') {
       this.handleIncomingData(peerId, rawPayload);
     } else if (msg.type === 'chunk') {
-      const binaryString = window.atob(msg.data);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-      this.handleIncomingData(peerId, bytes.buffer);
+      // Decode base64 → ArrayBuffer → pass as binary to handleIncomingData
+      const binary = atob(msg.data);
+      const buf = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
+      this.handleIncomingData(peerId, buf.buffer);
     }
   }
 
   // Warn user about potential data usage when using relay
   _warnAboutRelayUsage(peerId, fileSize) {
-    // Only show warning once per peer per session
     if (this._relayWarningShown.has(peerId)) return;
 
     const sizeMB = (fileSize / (1024 * 1024)).toFixed(1);
-    const warningMsg = `⚠️ Direct connection failed. Using relay mode which may consume up to ${sizeMB} MB of your data. For best results, ensure both devices are on the same network.`;
-
-    // Show toast notification (we'll need to access UIManager for this)
-    // For now, we'll log to console and rely on UI to show visual indicators
+    const warningMsg = `⚠️ Direct connection failed. Using relay mode which may consume up to ${sizeMB} MB of relay data.`;
     console.warn(warningMsg);
     this._relayWarningShown.add(peerId);
   }
 
+  // Adaptive flow control — adjusts in-flight buffer based on receiver throughput
+  // Slow receiver (e.g., 4G 5 Mbps) → reduce threshold so sender doesn't overwhelm
+  // Fast receiver (e.g., WiFi 50 Mbps) → keep high threshold for max throughput
+  _adjustFlowControl(peerId, meta) {
+    if (!this._flowCtrl) this._flowCtrl = new Map();
+    let fc = this._flowCtrl.get(peerId);
+    if (!fc) {
+      fc = { threshold: 16 * 1024 * 1024, lastMbps: 0, steadySends: 0 };
+      this._flowCtrl.set(peerId, fc);
+    }
+
+    const mbps = meta.mbps || meta.avgMbps || fc.lastMbps;
+    fc.lastMbps = mbps;
+
+    const channel = this.channels.get(peerId);
+    if (!channel || channel.readyState !== 'open') return;
+
+    const buf = channel.bufferedAmount;
+    const prev = fc.threshold;
+
+    // Slow connection (mobile 4G <8 Mbps): cap threshold lower
+    // Fast connection (>20 Mbps): allow more in-flight for max throughput
+    if (mbps < 8) {
+      // Halve threshold, min 1MB — prevents buffering too much on slow link
+      fc.threshold = Math.max(1024 * 1024, fc.threshold * 0.5);
+    } else if (mbps > 20 && buf < fc.threshold * 0.5) {
+      // Fast + buffer draining fast: increase, max 32MB
+      fc.threshold = Math.min(32 * 1024 * 1024, fc.threshold * 1.25);
+    }
+
+    // Apply new threshold if changed significantly
+    if (Math.abs(fc.threshold - prev) > 256 * 1024) {
+      if (channel.bufferedAmountLowThreshold !== undefined) {
+        channel.bufferedAmountLowThreshold = fc.threshold;
+      }
+      console.log(`[FlowCtrl] ${peerId}: ${mbps} Mbps → threshold ${(prev/1024/1024).toFixed(1)}MB → ${(fc.threshold/1024/1024).toFixed(1)}MB, buf=${(buf/1024/1024).toFixed(1)}MB`);
+    }
+  }
+
   sendFileRelay(peerId, file) {
+    // Enqueue for relay too — prevents overwriting
+    if (!this._relayQueues) this._relayQueues = new Map();
+    if (!this._relayQueues.has(peerId)) this._relayQueues.set(peerId, []);
+    this._relayQueues.get(peerId).push(file);
+    if (this._relayQueues.get(peerId).length === 1) {
+      this._processRelayQueue(peerId);
+    }
+  }
+
+  _processRelayQueue(peerId) {
+    const queue = this._relayQueues.get(peerId);
+    if (!queue || queue.length === 0) return;
+    const file = queue[0];
+    this._sendFileRelayDirect(peerId, file, () => {
+      queue.shift();
+      this._processRelayQueue(peerId);
+    });
+  }
+
+  _sendFileRelayDirect(peerId, file, onDone) {
     const fileName = ensureExtension(file.name, file.type);
-    const sendState = { cancelled: false, filename: fileName };
+    const sendState = { cancelled: false };
     this.activeSends.set(peerId, sendState);
 
     if (this.onTransferStart) this.onTransferStart(peerId, fileName, 'send');
@@ -504,7 +676,7 @@ export class WebRTCManager {
     const reader = new FileReader();
 
     reader.onload = (e) => {
-      if (sendState.cancelled) { this.activeSends.delete(peerId); return; }
+      if (sendState.cancelled) { this.activeSends.delete(peerId); if (onDone) onDone(); return; }
 
       const base64 = this.arrayBufferToBase64(e.target.result);
       this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'chunk', data: base64 }));
@@ -514,11 +686,12 @@ export class WebRTCManager {
       if (this.onProgress) this.onProgress(peerId, fileName, progress, file.size, 'send');
 
       if (offset < file.size) {
-        setTimeout(() => readSlice(offset), 10);
+        setTimeout(() => readSlice(offset), 8); // Minimal delay for throughput
       } else {
         this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'done' }));
         this.activeSends.delete(peerId);
         if (this.onFileComplete) this.onFileComplete(peerId, fileName, 'send');
+        if (onDone) onDone();
       }
     };
 
@@ -529,7 +702,31 @@ export class WebRTCManager {
     readSlice(0);
   }
 
-    // Wake Lock to prevent screen from sleeping during transfers
+  cancelSend(peerId) {
+    // Cancel current file being sent
+    const sendState = this.activeSends.get(peerId);
+    if (sendState) {
+      sendState.cancelled = true;
+    }
+    // Clear all queued files for this peer
+    if (this._fileQueues?.has(peerId)) this._fileQueues.delete(peerId);
+    if (this._relayQueues?.has(peerId)) this._relayQueues.delete(peerId);
+    if (this._pendingFiles?.has(peerId)) this._pendingFiles.delete(peerId);
+    // Notify receiver so they don't wait
+    const channel = this.channels.get(peerId);
+    if (channel && channel.readyState === 'open') {
+      channel.send(JSON.stringify({ type: 'cancel', filename: '' }));
+    }
+    this.activeSends.delete(peerId);
+  }
+
+  cancelReceive(peerId) {
+    this.incomingFiles.delete(peerId);
+    // Clean up flow state too so next file is accepted cleanly
+    if (this._flowState?.has(peerId)) this._flowState.delete(peerId);
+  }
+
+  // Wake Lock to prevent screen from sleeping during transfers
   async _requestWakeLock() {
     try {
       if ('wakeLock' in navigator) {
