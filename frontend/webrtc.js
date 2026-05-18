@@ -351,10 +351,11 @@ export class WebRTCManager {
         // Adjust flow control for future sends based on observed throughput
         if (meta.avgMbps) this._adjustFlowControl(peerId, { mbps: meta.avgMbps });
         if (this.onFileComplete) this.onFileComplete(peerId, meta.filename, 'send');
-        // ACK received — clear waiting flag so next queued file can start
+        // ACK received — clear waiting flag so next queued file can start (both direct + relay)
         if (this._senderWaitingAck) this._senderWaitingAck.delete(peerId);
-        console.log(`[WebRTC] ACK received for ${meta.filename} from ${peerId}, resuming queue`);
+        console.log(`[WebRTC] ACK received for ${meta.filename} from ${peerId}, resuming queues`);
         this._processQueue(peerId);
+        this._processRelayQueue(peerId);
 
       } else if (meta.type === 'cancel') {
         this.incomingFiles.delete(peerId);
@@ -681,10 +682,25 @@ export class WebRTCManager {
   _processRelayQueue(peerId) {
     const queue = this._relayQueues.get(peerId);
     if (!queue || queue.length === 0) return;
+
+    // Block if still waiting for ACK of previous file relay transfer
+    if (this._senderWaitingAck?.get(peerId)) {
+      console.log(`[WebRTC] Relay queue blocked for ${peerId}: waiting for ACK`);
+      return;
+    }
+
     const file = queue[0];
     this._sendFileRelayDirect(peerId, file, () => {
-      queue.shift();
-      this._processRelayQueue(peerId);
+      // Wait for ACK before dequeue — same as direct path
+      if (!this._senderWaitingAck) this._senderWaitingAck = new Map();
+      this._senderWaitingAck.set(peerId, true);
+      setTimeout(() => {
+        if (this._senderWaitingAck?.get(peerId)) {
+          this._senderWaitingAck.delete(peerId);
+          queue.shift();
+          this._processRelayQueue(peerId);
+        }
+      }, 8000);
     });
   }
 

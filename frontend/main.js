@@ -53,6 +53,8 @@ function init() {
       if (isDiscoverable) {
         signalingClient.sendSignal(joinedPeerId, { action: 'announce', name: identity.name, avatar: identity.avatar });
       }
+      // Pre-connect WebRTC when peer joins so file transfer is instant
+      webrtcManager.preConnect(joinedPeerId);
     },
     (leftPeerId) => {
       uiManager.removePeer(leftPeerId);
