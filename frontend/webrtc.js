@@ -195,12 +195,8 @@ export class WebRTCManager {
     };
     channel.onclose = () => {
       this.channels.delete(peerId);
-      // Don't shift queue — file stays in queue for resend
-      // Mark current file as pending so it's re-enqueued on reopen
-      const queue = this._fileQueues?.get(peerId);
-      if (queue && queue.length > 0) {
-        this._pendingFiles.set(peerId, queue[0]);
-      }
+      // Note: queue is NOT destroyed here — _sendFileDirect will handle recovery.
+      // _pendingFiles is set when an active send loses its channel.
     };
     channel.onmessage = (event) => {
       this.handleIncomingData(peerId, event.data);
@@ -355,6 +351,10 @@ export class WebRTCManager {
         // Adjust flow control for future sends based on observed throughput
         if (meta.avgMbps) this._adjustFlowControl(peerId, { mbps: meta.avgMbps });
         if (this.onFileComplete) this.onFileComplete(peerId, meta.filename, 'send');
+        // ACK received — clear waiting flag so next queued file can start
+        if (this._senderWaitingAck) this._senderWaitingAck.delete(peerId);
+        console.log(`[WebRTC] ACK received for ${meta.filename} from ${peerId}, resuming queue`);
+        this._processQueue(peerId);
 
       } else if (meta.type === 'cancel') {
         this.incomingFiles.delete(peerId);
@@ -458,6 +458,12 @@ export class WebRTCManager {
     const channel = this.channels.get(peerId);
     if (!channel || channel.readyState !== 'open') return;
 
+    // Don't start next file if still waiting for ACK of previous file
+    if (this._senderWaitingAck?.get(peerId)) {
+      console.log(`[WebRTC] Queue blocked for ${peerId}: still waiting for ACK of previous file`);
+      return;
+    }
+
     const file = queue[0];
     this._sendFileDirect(peerId, file, () => {
       // on done callback — dequeue and process next
@@ -553,9 +559,17 @@ export class WebRTCManager {
         if (this.onProgress) this.onProgress(peerId, fileName, 100, file.size, 'send');
         channel.send(JSON.stringify({ type: 'done' }));
         this.activeSends.delete(peerId);
+        // Wait for peer ACK before dequeue — prevents file2 chunks from mixing with
+        // file1 chunks on receiver when peer hasn't confirmed file1 yet
+        if (!this._senderWaitingAck) this._senderWaitingAck = new Map();
+        this._senderWaitingAck.set(peerId, true);
         setTimeout(() => {
+          // Safety: if ACK didn't arrive in 8s, still allow next file (proceed)
+          if (this._senderWaitingAck?.get(peerId)) {
+            this._senderWaitingAck.delete(peerId);
+            this._processQueue(peerId); // resume queue
+          }
           if (this.onFileComplete) this.onFileComplete(peerId, fileName, 'send');
-          if (onDone) onDone();
         }, 8000);
         return;
       }
