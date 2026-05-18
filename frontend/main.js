@@ -157,8 +157,7 @@ function init() {
       radarDot.style.background = '#00ff6a';
       radarDot.style.boxShadow = '0 0 8px rgba(0,255,106,0.6)';
       if (subtitle) subtitle.textContent = 'Connected to server. Devices on your network appear automatically. Use a Room Code to connect across any network.';
-      // Announce ourselves when we connect
-      signalingClient.sendSignal(identity.id, { action: 'announce', name: identity.name, avatar: identity.avatar });
+      // Announcements to peers are handled via onPeerJoined/onPeersList callbacks
 
       // Auto-join room from URL (from QR code scan or shared link)
       const urlRoom = new URL(window.location.href).searchParams.get('room');

@@ -118,10 +118,6 @@ export class WebRTCManager {
       bundlePolicy: 'max-bundle',
       // Rtcp mux policy
       rtcpMuxPolicy: 'require',
-      // Enable ICE restart for better connection recovery
-      iceRestartTimeout: 30000,
-      // Reduce ICE timeout for faster failure detection
-      iceConnectionTimeout: 20000,
       // Enable IPv6 candidates
       // Note: iceTransportPolicy: 'all' already enables IPv6 when available
     };

@@ -22,8 +22,7 @@ async function getPublicIp() {
   for (const api of apis) {
     try {
       const controller = new AbortController();
-      // Reduced timeout for faster failure
-      const timeout = setTimeout(() => controller.abort(), 500);
+      const timeout = setTimeout(() => controller.abort(), 3000);
       const res = await fetch(api, { signal: controller.signal });
       clearTimeout(timeout);
       const data = await res.json();
