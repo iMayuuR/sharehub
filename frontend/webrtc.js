@@ -258,13 +258,18 @@ export class WebRTCManager {
   }
 
   handleIncomingData(peerId, data) {
+    // Initialize inbound header queue map if not present
+    if (!this._incomingHeaderQueue) this._incomingHeaderQueue = new Map();
+
     if (typeof data === 'string') {
       const meta = JSON.parse(data);
 
       if (meta.type === 'header') {
-        // Reject if a file is already being received from this peer (sequential only)
+        // If a file is already being received, queue this header for later processing
         if (this.incomingFiles.has(peerId)) {
-          console.warn(`[WebRTC] Dropped header for "${meta.name}" — previous file still in progress from ${peerId}`);
+          if (!this._incomingHeaderQueue.has(peerId)) this._incomingHeaderQueue.set(peerId, []);
+          this._incomingHeaderQueue.get(peerId).push(meta);
+          console.warn(`[WebRTC] Queued header for "${meta.name}" – another file in progress from ${peerId}`);
           return;
         }
         // Per-peer flow state for throughput feedback to sender
@@ -334,6 +339,17 @@ export class WebRTCManager {
         setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
 
         if (this.onFileComplete) this.onFileComplete(peerId, downloadName, 'receive');
+
+        // After completing, check if there are queued headers and process the next one
+        if (this._incomingHeaderQueue.has(peerId)) {
+          const q = this._incomingHeaderQueue.get(peerId);
+          if (q.length) {
+            const nextMeta = q.shift();
+            // Process the next header as a new incoming file
+            this.handleIncomingData(peerId, JSON.stringify(nextMeta));
+          }
+          if (q.length === 0) this._incomingHeaderQueue.delete(peerId);
+        }
 
       } else if (meta.type === 'ack') {
         // Adjust flow control for future sends based on observed throughput
