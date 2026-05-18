@@ -439,6 +439,7 @@ export class WebRTCManager {
   }
 
   _processQueue(peerId) {
+    if (!this._fileQueues) this._fileQueues = new Map();
     const queue = this._fileQueues.get(peerId);
     if (!queue || queue.length === 0) return;
 
