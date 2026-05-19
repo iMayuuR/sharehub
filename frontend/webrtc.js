@@ -52,6 +52,7 @@ export class WebRTCManager {
     this._completedSendKeys = new Set(); // dedupe onFileComplete
     this._batchTotals = new Map(); // peerId → total files in current batch
     this._ackFallbackTimers = new Map(); // ackKey → timeout id
+    this._sendTimers = new Map(); // peerId → connection wait timer
   }
 
   /** Idempotent send-complete (data channel ACK, signaling ACK, or fallback timer). */
@@ -76,7 +77,7 @@ export class WebRTCManager {
     this._batchTotals.set(peerId, list.length);
     for (const file of list) this._enqueueFile(peerId, file, true);
     this._pendingFiles.set(peerId, list[0]);
-    this._beginOutbound(peerId, 0);
+    this._armSend(peerId, 0);
   }
 
   // "Polite peer" pattern: The peer with the SMALLER ID is "polite"
@@ -166,9 +167,21 @@ export class WebRTCManager {
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed') {
+      console.log(`[WebRTC] PC ${peerId.substring(0, 8)} connectionState=${pc.connectionState} ice=${pc.iceConnectionState}`);
+      if (pc.connectionState === 'connected') {
+        const ch = this.channels.get(peerId);
+        if (ch?.readyState === 'open') this._processQueue(peerId);
+      }
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         this.connections.delete(peerId);
         this.channels.delete(peerId);
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        const ch = this.channels.get(peerId);
+        if (ch?.readyState === 'open') this._processQueue(peerId);
       }
     };
 
@@ -192,7 +205,7 @@ export class WebRTCManager {
     return pc;
   }
 
-  // Pre-connect on discovery — impolite peer opens the data channel proactively
+  // Pre-connect: impolite peer (larger ID) creates the data channel
   preConnect(peerId) {
     const ch = this.channels.get(peerId);
     if (ch?.readyState === 'open' || ch?.readyState === 'connecting') return;
@@ -204,57 +217,75 @@ export class WebRTCManager {
     }
   }
 
-  /** User tapped Send — always create/open a data channel (don't wait for polite role). */
-  _ensureOutboundChannel(peerId) {
-    const ch = this.channels.get(peerId);
-    if (ch?.readyState === 'open') return true;
-    if (ch?.readyState === 'connecting') return false;
-
-    if (ch) this.channels.delete(peerId);
-
-    const pc = this.connections.get(peerId);
-    const pcOk = pc && pc.connectionState !== 'closed' && pc.connectionState !== 'failed';
-    const conn = pcOk ? pc : this.createConnection(peerId);
-
-    if (!this.channels.has(peerId)) {
-      const channel = conn.createDataChannel('fileTransfer', { ordered: true });
-      this.setupChannel(peerId, channel);
-      console.log(`[WebRTC] Created outbound data channel for ${peerId}`);
-    }
-    return false;
+  _clearSendTimer(peerId) {
+    const t = this._sendTimers.get(peerId);
+    if (t) clearTimeout(t);
+    this._sendTimers.delete(peerId);
+    const legacy = this._connectionTimeouts.get(peerId);
+    if (legacy) clearTimeout(legacy);
+    this._connectionTimeouts.delete(peerId);
   }
 
-  _beginOutbound(peerId, retryCount = 0) {
+  /** Wait for data channel — do NOT tear down while ICE is still negotiating. */
+  _armSend(peerId, retryCount = 0, negotiateWaits = 0) {
     const ch = this.channels.get(peerId);
     if (ch?.readyState === 'open') {
+      this._clearSendTimer(peerId);
       this._processQueue(peerId);
       return;
     }
 
-    const existingTimeout = this._connectionTimeouts.get(peerId);
-    if (existingTimeout) {
-      clearTimeout(existingTimeout);
-      this._connectionTimeouts.delete(peerId);
+    const pc = this.connections.get(peerId) || this.createConnection(peerId);
+
+    if (retryCount === 0) {
+      this.preConnect(peerId);
     }
 
-    this._ensureOutboundChannel(peerId);
+    // Polite peer: remote may not have opened yet — create channel on retry
+    if (retryCount >= 1 && this._isPolite(peerId) && !this.channels.has(peerId)) {
+      const channel = pc.createDataChannel('fileTransfer', { ordered: true });
+      this.setupChannel(peerId, channel);
+      console.log(`[WebRTC] Polite peer opening data channel to ${peerId}`);
+    }
 
-    const timeoutId = setTimeout(() => {
-      this._connectionTimeouts.delete(peerId);
-      if (this.channels.get(peerId)?.readyState === 'open') return;
+    this._clearSendTimer(peerId);
+    const waitMs = retryCount === 0 ? 20000 : 12000;
 
-      if (retryCount < 4) {
-        console.log(`[WebRTC] Channel not open after 5s (attempt ${retryCount + 1}), retrying…`);
-        this._closeConnectionForPeer(peerId);
-        this._beginOutbound(peerId, retryCount + 1);
+    const timer = setTimeout(() => {
+      this._sendTimers.delete(peerId);
+      if (this.channels.get(peerId)?.readyState === 'open') {
+        this._processQueue(peerId);
         return;
       }
 
-      console.log(`[WebRTC] Direct connect failed for ${peerId}, relay fallback for queued files`);
-      this._flushQueueToRelay(peerId);
-    }, 5000);
+      const pcNow = this.connections.get(peerId);
+      const chNow = this.channels.get(peerId);
+      const stillNegotiating =
+        chNow?.readyState === 'connecting' ||
+        pcNow?.connectionState === 'connecting' ||
+        pcNow?.iceConnectionState === 'checking' ||
+        pcNow?.iceConnectionState === 'new';
 
-    this._connectionTimeouts.set(peerId, timeoutId);
+      if (stillNegotiating && negotiateWaits < 5) {
+        console.log(`[WebRTC] Still negotiating with ${peerId}, waiting… (${negotiateWaits + 1}/5)`);
+        this._armSend(peerId, retryCount, negotiateWaits + 1);
+        return;
+      }
+
+      if (retryCount < 3) {
+        console.log(`[WebRTC] Send retry ${retryCount + 1} for ${peerId}`);
+        if (pcNow?.connectionState === 'failed' || pcNow?.connectionState === 'closed') {
+          this._closeConnectionForPeer(peerId);
+        }
+        this._armSend(peerId, retryCount + 1, 0);
+        return;
+      }
+
+      console.log(`[WebRTC] Direct connect failed for ${peerId}, relay fallback`);
+      this._flushQueueToRelay(peerId);
+    }, waitMs);
+
+    this._sendTimers.set(peerId, timer);
   }
 
   _flushQueueToRelay(peerId) {
@@ -282,11 +313,7 @@ export class WebRTCManager {
       console.log(`[WebRTC] Data channel open for ${peerId}`);
       this._sending.delete(peerId);
       this._pendingFiles.delete(peerId);
-      const t = this._connectionTimeouts.get(peerId);
-      if (t) {
-        clearTimeout(t);
-        this._connectionTimeouts.delete(peerId);
-      }
+      this._clearSendTimer(peerId);
       this._processQueue(peerId);
     };
     channel.onclose = () => {
@@ -509,17 +536,34 @@ export class WebRTCManager {
     console.log(`[WebRTC] Closed stale connection for ${peerId}`);
   }
 
-  sendFile(peerId, file) {
+  sendFile(peerId, file, retryCount = 0) {
     if (!file) return;
     const channel = this.channels.get(peerId);
+
     if (channel?.readyState === 'open') {
       console.log(`[WebRTC] Open channel for ${peerId}, queuing: ${file.name}`);
-    } else {
-      console.log(`[WebRTC] No open channel for ${peerId}, establishing…`);
+      this._enqueueFile(peerId, file);
+      return;
     }
-    this._enqueueFile(peerId, file, true);
-    this._pendingFiles.set(peerId, file);
-    this._beginOutbound(peerId, 0);
+
+    if (retryCount === 0) {
+      console.log(`[WebRTC] No channel for ${peerId}, establishing…`);
+      this._enqueueFile(peerId, file, true);
+      this._pendingFiles.set(peerId, file);
+      this._armSend(peerId, 0);
+      return;
+    }
+
+    // Legacy retry path (single-file)
+    if (retryCount < 4) {
+      if (this.connections.get(peerId)?.connectionState === 'failed') {
+        this._closeConnectionForPeer(peerId);
+      }
+      this.preConnect(peerId);
+      this._armSend(peerId, retryCount);
+    } else {
+      this._flushQueueToRelay(peerId);
+    }
   }
 
   _enqueueFile(peerId, file, deferProcess = false) {
