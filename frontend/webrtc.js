@@ -690,7 +690,7 @@ export class WebRTCManager {
     const batchTotal = this._batchTotals.get(peerId) || queue.length;
     console.log(`[WebRTC] Direct send to ${peerId}: ${fileName} (${(file.size / 1024 / 1024).toFixed(1)} MB, queue=${queue.length})`);
 
-    const sendState = { cancelled: false, reader: null };
+    const sendState = { cancelled: false, reader: null, filename: fileName };
     this.activeSends.set(peerId, sendState);
 
     if (this.onTransferStart) {
@@ -870,7 +870,7 @@ export class WebRTCManager {
 
   _sendFileRelayDirect(peerId, file, onDone) {
     const fileName = ensureExtension(file.name, file.type);
-    const sendState = { cancelled: false, reader: null };
+    const sendState = { cancelled: false, reader: null, filename: fileName };
     this.activeSends.set(peerId, sendState);
 
     if (this.onTransferStart) this.onTransferStart(peerId, fileName, 'send');
@@ -914,6 +914,7 @@ export class WebRTCManager {
 
   cancelSend(peerId) {
     const sendState = this.activeSends.get(peerId);
+    const filename = sendState?.filename || '';
     if (sendState) {
       sendState.cancelled = true;
       if (sendState.reader) {
@@ -937,24 +938,26 @@ export class WebRTCManager {
     if (channel) {
       channel.onbufferedamountlow = null;
       if (channel.readyState === 'open') {
-        channel.send(JSON.stringify({ type: 'cancel', filename: '' }));
+        channel.send(JSON.stringify({ type: 'cancel', filename }));
       } else {
-        this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'cancel', filename: '' }));
+        this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'cancel', filename }));
       }
     } else {
-      this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'cancel', filename: '' }));
+      this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'cancel', filename }));
     }
   }
 
   cancelReceive(peerId) {
+    const fileData = this.incomingFiles.get(peerId);
+    const filename = fileData?.meta?.name || '';
     this.incomingFiles.delete(peerId);
     if (this._flowState?.has(peerId)) this._flowState.delete(peerId);
     // Notify sender so they don't keep sending and don't get stuck
     const channel = this.channels.get(peerId);
     if (channel && channel.readyState === 'open') {
-      channel.send(JSON.stringify({ type: 'cancel', filename: '' }));
+      channel.send(JSON.stringify({ type: 'cancel', filename }));
     } else {
-      this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'cancel', filename: '' }));
+      this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'cancel', filename }));
     }
   }
 
