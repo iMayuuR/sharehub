@@ -1,10 +1,11 @@
 // webrtc.js - Enhanced logging for debugging
 import { fileKey, enqueueFile, dequeueIfHead, queueRemaining } from './transfer-queue.js';
 
-// 8MB chunks — fewer round-trips for 500MB+ files on same Wi‑Fi (~4+ MB/s target)
-const CHUNK_SIZE = 8 * 1024 * 1024;
-// Default in-flight buffer for fast LAN (64MB ≈ 8 chunks pipelined)
-const LAN_BUFFER_THRESHOLD = 64 * 1024 * 1024;
+// 4MB chunks — balance throughput vs browser SCTP limits
+const CHUNK_SIZE = 4 * 1024 * 1024;
+// MUST stay below browser SCTP buffer (~16MB). 64MB breaks bufferedamountlow → send hangs forever.
+const LAN_BUFFER_THRESHOLD = 4 * 1024 * 1024;
+const LAN_BUFFER_THRESHOLD_MAX = 16 * 1024 * 1024;
 // 256KB relay chunks (base64 overhead is ~33%, keep smaller)
 const RELAY_CHUNK_SIZE = 256 * 1024;
 const SEND_ACK_FALLBACK_MS = 15000;
@@ -35,6 +36,7 @@ export class WebRTCManager {
     this.onProgress = onProgress;
     this.onFileComplete = onFileComplete;
     this.onTransferStart = null;
+    this.onSendFailed = null;
     this.connections = new Map();
     this.channels = new Map();
     this.incomingFiles = new Map();
@@ -219,16 +221,14 @@ export class WebRTCManager {
     this.channels.set(peerId, channel);
 
     channel.onopen = () => {
-      // Resume any file that was mid-send when channel closed
+      console.log(`[WebRTC] Data channel open for ${peerId}`);
+      this._sending.delete(peerId);
       const pending = this._pendingFiles.get(peerId);
       if (pending) {
-        console.log(`[WebRTC] Channel reopened, resuming: ${pending.name}`);
         this._enqueueFile(peerId, pending);
         this._pendingFiles.delete(peerId);
       }
-      // Only process queue if there's no pending file being resumed
-      // (otherwise _enqueueFile already kicked off _processQueue)
-      if (!pending) this._processQueue(peerId);
+      this._processQueue(peerId);
     };
     channel.onclose = () => {
       this.channels.delete(peerId);
@@ -484,7 +484,13 @@ export class WebRTCManager {
       console.log(`[WebRTC] Retry ${retryCount} for ${peerId} — closing stale connection`);
       this._closeConnectionForPeer(peerId);
       this.preConnect(peerId);
-      setTimeout(() => this.sendFile(peerId, file, retryCount + 1), 2000);
+      setTimeout(() => {
+        this._sending.delete(peerId);
+        this._processQueue(peerId);
+        if (!this.channels.get(peerId) || this.channels.get(peerId).readyState !== 'open') {
+          this.sendFile(peerId, file, retryCount + 1);
+        }
+      }, 2000);
 
     } else {
       // Max retries — remove from direct queue and fall to relay
@@ -495,7 +501,9 @@ export class WebRTCManager {
       }
       this._pendingFiles.delete(peerId);
       console.log(`[WebRTC] Max retries for ${peerId}, relay fallback`);
+      this._sending.delete(peerId);
       this._warnAboutRelayUsage(peerId, file.size);
+      if (this.onSendFailed) this.onSendFailed(peerId, file.name, 'Direct connection failed, trying relay…');
       this.sendFileRelay(peerId, file);
     }
   }
@@ -574,13 +582,13 @@ export class WebRTCManager {
 
     const fileName = ensureExtension(file.name, file.type);
     const fc = this._flowCtrl?.get(peerId);
-    const threshold = fc?.threshold || LAN_BUFFER_THRESHOLD;
+    const threshold = Math.min(fc?.threshold || LAN_BUFFER_THRESHOLD, LAN_BUFFER_THRESHOLD_MAX);
     if (channel.bufferedAmountLowThreshold !== undefined) {
       channel.bufferedAmountLowThreshold = threshold;
     }
     const queue = this._fileQueues?.get(peerId) || [];
     const batchTotal = this._batchTotals.get(peerId) || queue.length;
-    console.log(`[WebRTC] Direct send to ${peerId}: ${fileName} (${(file.size / 1024 / 1024).toFixed(1)} MB, queue=${queue.length}, threshold=${(threshold / 1024 / 1024).toFixed(0)}MB)`);
+    console.log(`[WebRTC] Direct send to ${peerId}: ${fileName} (${(file.size / 1024 / 1024).toFixed(1)} MB, queue=${queue.length})`);
 
     const sendState = { cancelled: false };
     this.activeSends.set(peerId, sendState);
@@ -592,19 +600,29 @@ export class WebRTCManager {
     channel.send(JSON.stringify({ type: 'header', name: fileName, size: file.size, mimeType: file.type }));
     if (this.onProgress) this.onProgress(peerId, fileName, 0, file.size, 'send');
 
+    // Tiny / empty file — no FileReader needed
+    if (file.size === 0) {
+      channel.send(JSON.stringify({ type: 'done' }));
+      this.activeSends.delete(peerId);
+      this._finishDirectSend(peerId, file, fileName);
+      return;
+    }
+
     let offset = 0;
     let prefetchBuf = null;
-    let prefetchOffset = Math.min(CHUNK_SIZE, file.size);
+    let prefetchOffset = 0;
     const reader = new FileReader();
     const prefetchReader = new FileReader();
 
     const readNextInto = (targetReader, at) => {
-      if (at >= file.size) return;
       targetReader.readAsArrayBuffer(file.slice(at, Math.min(at + CHUNK_SIZE, file.size)));
     };
 
-    const prefetchNext = () => {
-      if (prefetchOffset < file.size) readNextInto(prefetchReader, prefetchOffset);
+    const waitThenSend = (buf) => {
+      channel.onbufferedamountlow = () => {
+        channel.onbufferedamountlow = null;
+        sendChunk(buf);
+      };
     };
 
     const sendChunk = (buf) => {
@@ -614,36 +632,9 @@ export class WebRTCManager {
         return;
       }
 
-      const flush = () => {
-        while (prefetchBuf && channel.bufferedAmount <= threshold && offset < file.size) {
-          const tmp = prefetchBuf;
-          prefetchBuf = null;
-          readNextInto(prefetchReader, prefetchOffset);
-          prefetchOffset = Math.min(prefetchOffset + tmp.byteLength, file.size);
-          try {
-            channel.send(tmp);
-          } catch (err) {
-            if (err.name === 'OperationError') {
-              prefetchBuf = tmp;
-              channel.onbufferedamountlow = () => {
-                channel.onbufferedamountlow = null;
-                flush();
-              };
-              return;
-            }
-            throw err;
-          }
-          offset += tmp.byteLength;
-          const p = Math.min((offset / file.size) * 100, 99.9);
-          if (this.onProgress) this.onProgress(peerId, fileName, p, file.size, 'send');
-        }
-      };
-
-      if (channel.bufferedAmount > threshold) {
-        channel.onbufferedamountlow = () => {
-          channel.onbufferedamountlow = null;
-          sendChunk(buf);
-        };
+      const lowMark = channel.bufferedAmountLowThreshold ?? threshold;
+      if (channel.bufferedAmount > lowMark) {
+        waitThenSend(buf);
         return;
       }
 
@@ -651,13 +642,14 @@ export class WebRTCManager {
         channel.send(buf);
       } catch (err) {
         if (err.name === 'OperationError') {
-          channel.onbufferedamountlow = () => {
-            channel.onbufferedamountlow = null;
-            sendChunk(buf);
-          };
+          waitThenSend(buf);
           return;
         }
-        throw err;
+        console.error('[WebRTC] channel.send failed:', err);
+        this._sending.delete(peerId);
+        this.activeSends.delete(peerId);
+        if (this.onSendFailed) this.onSendFailed(peerId, fileName, err.message);
+        return;
       }
 
       offset += buf.byteLength;
@@ -671,24 +663,32 @@ export class WebRTCManager {
         return;
       }
 
-      flush();
-
       if (prefetchBuf) {
         const tmp = prefetchBuf;
         prefetchBuf = null;
         readNextInto(prefetchReader, prefetchOffset);
-        prefetchOffset = Math.min(prefetchOffset + tmp.byteLength, file.size);
+        prefetchOffset += CHUNK_SIZE;
         sendChunk(tmp);
       } else {
         readNextInto(reader, offset);
       }
     };
 
-    prefetchReader.onload = (e) => { prefetchBuf = e.target.result; };
-    reader.onload = (e) => sendChunk(e.target.result);
+    const onReadError = (err) => {
+      console.error('[WebRTC] FileReader error:', err);
+      this._sending.delete(peerId);
+      this.activeSends.delete(peerId);
+      if (this.onSendFailed) this.onSendFailed(peerId, fileName, 'Could not read file');
+    };
 
+    prefetchReader.onload = (e) => { prefetchBuf = e.target.result; };
+    prefetchReader.onerror = onReadError;
+    reader.onload = (e) => sendChunk(e.target.result);
+    reader.onerror = onReadError;
+
+    prefetchOffset = CHUNK_SIZE;
     readNextInto(reader, 0);
-    if (file.size > CHUNK_SIZE) prefetchNext();
+    if (file.size > CHUNK_SIZE) readNextInto(prefetchReader, prefetchOffset);
   }
 
   arrayBufferToBase64(buffer) {
@@ -748,7 +748,7 @@ export class WebRTCManager {
       // Halve threshold, min 1MB — prevents buffering too much on slow link
       fc.threshold = Math.max(1024 * 1024, fc.threshold * 0.5);
     } else if (mbps > 20 && buf < fc.threshold * 0.5) {
-      fc.threshold = Math.min(LAN_BUFFER_THRESHOLD, fc.threshold * 1.25);
+      fc.threshold = Math.min(LAN_BUFFER_THRESHOLD_MAX, fc.threshold * 1.25);
     }
 
     // Apply new threshold if changed significantly

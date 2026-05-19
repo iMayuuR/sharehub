@@ -74,17 +74,21 @@ export class SignalingClient {
       this._publicIp = await getPublicIp();
     }
 
-    const signalingBase = import.meta.env.VITE_SIGNALING_URL;
     let url;
+    const signalingBase = import.meta.env.VITE_SIGNALING_URL;
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
+    let wsBase;
     if (signalingBase) {
-      const base = signalingBase.replace(/^http/, 'ws');
-      url = `${base}?peerId=${this.peerId}&publicIp=${encodeURIComponent(this._publicIp)}`;
+      wsBase = signalingBase.replace(/^http/, 'ws');
+    } else if (isLocal) {
+      wsBase = `ws://${window.location.hostname}:3002`;
     } else {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.hostname;
-      url = `${protocol}//${host}:3002?peerId=${this.peerId}&publicIp=${encodeURIComponent(this._publicIp)}`;
+      // Vercel/static host has no WS on :3002 — use Render signaling service
+      wsBase = 'wss://sharehub-signaling.onrender.com';
     }
+
+    url = `${wsBase}?peerId=${this.peerId}&publicIp=${encodeURIComponent(this._publicIp)}`;
 
     if (this._roomId) url += `&roomId=${encodeURIComponent(this._roomId)}`;
 

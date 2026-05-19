@@ -16,7 +16,9 @@ const peerMetadata = new Map();
 
 function init() {
   uiManager = new UIManager((peerId, fileOrFiles) => {
+    if (!webrtcManager) return;
     const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+    if (!files[0]) return;
     if (files.length > 1) {
       uiManager.showTransferSheet();
       uiManager.showToast(`Sending ${files.length} files…`);
@@ -25,12 +27,9 @@ function init() {
       webrtcManager.sendFile(peerId, files[0]);
     }
   });
-  
-  uiManager.setIdentity(identity);
-  // myAdName is used for WebSocket health check pings, not for peer announcements
-  // Actual announcements are handled via signalingClient.sendSignal() in the connected callback
 
-  // Handle Profile Edits
+  uiManager.setIdentity(identity);
+
   uiManager.saveProfileBtn.addEventListener('click', () => {
     identity.name = uiManager.editNameInput.value || identity.name;
     saveIdentity(identity);
@@ -143,6 +142,11 @@ function init() {
     }
   );
 
+  webrtcManager.onSendFailed = (peerId, filename, reason) => {
+    uiManager.showToast(`⚠️ Send failed: ${reason}`);
+    uiManager.setPeerStatus(peerId, 'Send failed — tap to retry');
+  };
+
   // Transfer start notifications
   webrtcManager.onTransferStart = (peerId, filename, direction, meta) => {
     uiManager.showTransferSheet();
@@ -218,7 +222,9 @@ function init() {
   }
 
   // Keepalive ping — prevents Render free tier from sleeping (13 min interval)
-  const signalingUrl = import.meta.env.VITE_SIGNALING_URL || (window.location.origin.includes('localhost') ? 'http://localhost:3002' : window.location.origin);
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const signalingUrl = import.meta.env.VITE_SIGNALING_URL
+    || (isLocal ? 'http://localhost:3002' : 'https://sharehub-signaling.onrender.com');
   if (signalingUrl) {
     const ping = () => fetch(`${signalingUrl}/health`).catch(() => {});
     ping();
