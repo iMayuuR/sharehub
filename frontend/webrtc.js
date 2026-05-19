@@ -187,11 +187,13 @@ export class WebRTCManager {
       // Resume any file that was mid-send when channel closed
       const pending = this._pendingFiles.get(peerId);
       if (pending) {
-        console.log(`[WebRTC] Resuming after channel reopen: ${pending.name}`);
+        console.log(`[WebRTC] Channel reopened, resuming: ${pending.name}`);
         this._enqueueFile(peerId, pending);
         this._pendingFiles.delete(peerId);
       }
-      this._processQueue(peerId);
+      // Only process queue if there's no pending file being resumed
+      // (otherwise _enqueueFile already kicked off _processQueue)
+      if (!pending) this._processQueue(peerId);
     };
     channel.onclose = () => {
       this.channels.delete(peerId);
@@ -395,6 +397,25 @@ export class WebRTCManager {
     }
   }
 
+  // Force-close a stale WebRTC connection so retry can start fresh
+  _closeConnectionForPeer(peerId) {
+    const pc = this.connections.get(peerId);
+    if (pc) {
+      try { pc.close(); } catch (_) {}
+      this.connections.delete(peerId);
+    }
+    const ch = this.channels.get(peerId);
+    if (ch && ch.readyState !== 'closed') {
+      try { ch.close(); } catch (_) {}
+    }
+    this.channels.delete(peerId);
+    this._pendingCandidates.delete(peerId);
+    const t = this._connectionTimeouts.get(peerId);
+    if (t) { clearTimeout(t); this._connectionTimeouts.delete(peerId); }
+    // Leave file in queue — retry will pick it up
+    console.log(`[WebRTC] Closed stale connection for ${peerId}`);
+  }
+
   sendFile(peerId, file, retryCount = 0) {
     const channel = this.channels.get(peerId);
 
@@ -404,11 +425,17 @@ export class WebRTCManager {
       this._enqueueFile(peerId, file);
       return;
     }
+
+    // Cancel any pending retry/timeout for this peer — we're handling it now
+    const existingTimeout = this._connectionTimeouts.get(peerId);
+    if (existingTimeout) { clearTimeout(existingTimeout); this._connectionTimeouts.delete(peerId); }
+
     // No open channel
     if (retryCount === 0) {
       console.log(`[WebRTC] No channel for ${peerId}, establishing...`);
       this.preConnect(peerId);
       this._enqueueFile(peerId, file);
+      this._pendingFiles.set(peerId, file); // Track so onopen can resume
 
       const timeoutId = setTimeout(() => {
         if (this.channels.get(peerId)?.readyState !== 'open') {
@@ -420,20 +447,19 @@ export class WebRTCManager {
       this._connectionTimeouts.set(peerId, timeoutId);
 
     } else if (retryCount < 4) {
-      console.log(`[WebRTC] Retry ${retryCount} for ${peerId}`);
-      this.preConnect(peerId);
-      // No re-enqueue: file already queued from first sendFile call.
-      // channel.onopen → _processQueue will pick it up.
+      console.log(`[WebRTC] Retry ${retryCount} for ${peerId} — closing stale connection`);
+      this._closeConnectionForPeer(peerId); // Force fresh connection on retry
+      this._enqueueFile(peerId, file);
       setTimeout(() => this.sendFile(peerId, file, retryCount + 1), 2000);
 
     } else {
-      // Max retries — clear direct queue and fall to relay
+      // Max retries — remove from direct queue and fall to relay
       if (this._fileQueues?.has(peerId)) {
         const q = this._fileQueues.get(peerId);
-        // Remove the specific file from queue (it's the first one)
-        const idx = q.findIndex(f => f === file);
+        const idx = q.findIndex(f => f.name === file.name);
         if (idx !== -1) q.splice(idx, 1);
       }
+      this._pendingFiles.delete(peerId);
       console.log(`[WebRTC] Max retries for ${peerId}, relay fallback`);
       this._warnAboutRelayUsage(peerId, file.size);
       this.sendFileRelay(peerId, file);
@@ -444,9 +470,15 @@ export class WebRTCManager {
   _enqueueFile(peerId, file) {
     if (!this._fileQueues) this._fileQueues = new Map();
     if (!this._fileQueues.has(peerId)) this._fileQueues.set(peerId, []);
-    this._fileQueues.get(peerId).push(file);
+    const queue = this._fileQueues.get(peerId);
+    // Avoid duplicate same-file references in queue
+    if (queue.some(f => f.name === file.name)) {
+      console.log(`[WebRTC] File "${file.name}" already queued for ${peerId}, skipping duplicate`);
+      return;
+    }
+    queue.push(file);
     // Kick off processing if this is the only file in queue
-    if (this._fileQueues.get(peerId).length === 1) {
+    if (queue.length === 1) {
       this._processQueue(peerId);
     }
   }
