@@ -74,12 +74,9 @@ export class WebRTCManager {
     const list = Array.from(files);
     console.log(`[WebRTC] Queuing ${list.length} file(s) for ${peerId}`);
     this._batchTotals.set(peerId, list.length);
-    const channel = this.channels.get(peerId);
-    if (!channel || channel.readyState !== 'open') {
-      this.preConnect(peerId);
-      if (list[0]) this._pendingFiles.set(peerId, list[0]);
-    }
-    for (const file of list) this._enqueueFile(peerId, file);
+    for (const file of list) this._enqueueFile(peerId, file, true);
+    this._pendingFiles.set(peerId, list[0]);
+    this._beginOutbound(peerId, 0);
   }
 
   // "Polite peer" pattern: The peer with the SMALLER ID is "polite"
@@ -195,22 +192,83 @@ export class WebRTCManager {
     return pc;
   }
 
-  // Pre-connect: Only the "impolite" peer (larger ID) initiates
-  // This prevents glare (both sides sending offers simultaneously)
+  // Pre-connect on discovery — impolite peer opens the data channel proactively
   preConnect(peerId) {
-    if (this.channels.has(peerId)) return; // Already have a channel
+    const ch = this.channels.get(peerId);
+    if (ch?.readyState === 'open' || ch?.readyState === 'connecting') return;
 
     const pc = this.createConnection(peerId);
-
-    // Only the impolite peer (larger ID) creates the data channel
-    // This triggers onnegotiationneeded → sends offer
     if (!this._isPolite(peerId)) {
-      const channel = pc.createDataChannel('fileTransfer', {
-        ordered: true,
-        negotiated: false
-      });
+      const channel = pc.createDataChannel('fileTransfer', { ordered: true });
       this.setupChannel(peerId, channel);
     }
+  }
+
+  /** User tapped Send — always create/open a data channel (don't wait for polite role). */
+  _ensureOutboundChannel(peerId) {
+    const ch = this.channels.get(peerId);
+    if (ch?.readyState === 'open') return true;
+    if (ch?.readyState === 'connecting') return false;
+
+    if (ch) this.channels.delete(peerId);
+
+    const pc = this.connections.get(peerId);
+    const pcOk = pc && pc.connectionState !== 'closed' && pc.connectionState !== 'failed';
+    const conn = pcOk ? pc : this.createConnection(peerId);
+
+    if (!this.channels.has(peerId)) {
+      const channel = conn.createDataChannel('fileTransfer', { ordered: true });
+      this.setupChannel(peerId, channel);
+      console.log(`[WebRTC] Created outbound data channel for ${peerId}`);
+    }
+    return false;
+  }
+
+  _beginOutbound(peerId, retryCount = 0) {
+    const ch = this.channels.get(peerId);
+    if (ch?.readyState === 'open') {
+      this._processQueue(peerId);
+      return;
+    }
+
+    const existingTimeout = this._connectionTimeouts.get(peerId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+      this._connectionTimeouts.delete(peerId);
+    }
+
+    this._ensureOutboundChannel(peerId);
+
+    const timeoutId = setTimeout(() => {
+      this._connectionTimeouts.delete(peerId);
+      if (this.channels.get(peerId)?.readyState === 'open') return;
+
+      if (retryCount < 4) {
+        console.log(`[WebRTC] Channel not open after 5s (attempt ${retryCount + 1}), retrying…`);
+        this._closeConnectionForPeer(peerId);
+        this._beginOutbound(peerId, retryCount + 1);
+        return;
+      }
+
+      console.log(`[WebRTC] Direct connect failed for ${peerId}, relay fallback for queued files`);
+      this._flushQueueToRelay(peerId);
+    }, 5000);
+
+    this._connectionTimeouts.set(peerId, timeoutId);
+  }
+
+  _flushQueueToRelay(peerId) {
+    const queue = this._fileQueues?.get(peerId);
+    if (!queue?.length) return;
+    const files = [...queue];
+    this._fileQueues.delete(peerId);
+    this._sending.delete(peerId);
+    this._pendingFiles.delete(peerId);
+    this._batchTotals.delete(peerId);
+    if (this.onSendFailed) {
+      this.onSendFailed(peerId, files[0]?.name || 'files', 'Direct connection failed, trying relay…');
+    }
+    for (const file of files) this.sendFileRelay(peerId, file);
   }
 
   setupChannel(peerId, channel) {
@@ -223,10 +281,11 @@ export class WebRTCManager {
     channel.onopen = () => {
       console.log(`[WebRTC] Data channel open for ${peerId}`);
       this._sending.delete(peerId);
-      const pending = this._pendingFiles.get(peerId);
-      if (pending) {
-        this._enqueueFile(peerId, pending);
-        this._pendingFiles.delete(peerId);
+      this._pendingFiles.delete(peerId);
+      const t = this._connectionTimeouts.get(peerId);
+      if (t) {
+        clearTimeout(t);
+        this._connectionTimeouts.delete(peerId);
       }
       this._processQueue(peerId);
     };
@@ -450,65 +509,20 @@ export class WebRTCManager {
     console.log(`[WebRTC] Closed stale connection for ${peerId}`);
   }
 
-  sendFile(peerId, file, retryCount = 0) {
+  sendFile(peerId, file) {
+    if (!file) return;
     const channel = this.channels.get(peerId);
-
-    if (channel && channel.readyState === 'open') {
-      // Direct connection — enqueue for sequential multi-file transfer
+    if (channel?.readyState === 'open') {
       console.log(`[WebRTC] Open channel for ${peerId}, queuing: ${file.name}`);
-      this._enqueueFile(peerId, file);
-      return;
-    }
-
-    // Cancel any pending retry/timeout for this peer — we're handling it now
-    const existingTimeout = this._connectionTimeouts.get(peerId);
-    if (existingTimeout) { clearTimeout(existingTimeout); this._connectionTimeouts.delete(peerId); }
-
-    // No open channel
-    if (retryCount === 0) {
-      console.log(`[WebRTC] No channel for ${peerId}, establishing...`);
-      this.preConnect(peerId);
-      this._enqueueFile(peerId, file);
-      this._pendingFiles.set(peerId, file); // Track so onopen can resume
-
-      const timeoutId = setTimeout(() => {
-        if (this.channels.get(peerId)?.readyState !== 'open') {
-          console.log(`[WebRTC] Channel not open after 5s, retrying...`);
-          this.sendFile(peerId, file, 1);
-        }
-        this._connectionTimeouts.delete(peerId);
-      }, 5000);
-      this._connectionTimeouts.set(peerId, timeoutId);
-
-    } else if (retryCount < 4) {
-      console.log(`[WebRTC] Retry ${retryCount} for ${peerId} — closing stale connection`);
-      this._closeConnectionForPeer(peerId);
-      this.preConnect(peerId);
-      setTimeout(() => {
-        this._sending.delete(peerId);
-        this._processQueue(peerId);
-        if (!this.channels.get(peerId) || this.channels.get(peerId).readyState !== 'open') {
-          this.sendFile(peerId, file, retryCount + 1);
-        }
-      }, 2000);
-
     } else {
-      // Max retries — remove from direct queue and fall to relay
-      if (this._fileQueues?.has(peerId)) {
-        const q = this._fileQueues.get(peerId);
-        const idx = q.findIndex(f => fileKey(f) === fileKey(file));
-        if (idx !== -1) q.splice(idx, 1);
-      }
-      this._pendingFiles.delete(peerId);
-      console.log(`[WebRTC] Max retries for ${peerId}, relay fallback`);
-      this._sending.delete(peerId);
-      this._warnAboutRelayUsage(peerId, file.size);
-      if (this.onSendFailed) this.onSendFailed(peerId, file.name, 'Direct connection failed, trying relay…');
-      this.sendFileRelay(peerId, file);
+      console.log(`[WebRTC] No open channel for ${peerId}, establishing…`);
     }
+    this._enqueueFile(peerId, file, true);
+    this._pendingFiles.set(peerId, file);
+    this._beginOutbound(peerId, 0);
   }
 
-  _enqueueFile(peerId, file) {
+  _enqueueFile(peerId, file, deferProcess = false) {
     if (!this._fileQueues) this._fileQueues = new Map();
     if (!this._fileQueues.has(peerId)) this._fileQueues.set(peerId, []);
     const queue = this._fileQueues.get(peerId);
@@ -517,7 +531,7 @@ export class WebRTCManager {
       console.log(`[WebRTC] File "${file.name}" already queued for ${peerId}, skipping duplicate`);
       return;
     }
-    this._processQueue(peerId);
+    if (!deferProcess) this._processQueue(peerId);
   }
 
   getQueueStatus(peerId) {
@@ -534,11 +548,15 @@ export class WebRTCManager {
     if (!queue || queue.length === 0) return;
 
     const channel = this.channels.get(peerId);
-    if (!channel || channel.readyState !== 'open') return;
+    if (!channel || channel.readyState !== 'open') {
+      console.log(`[WebRTC] Queue waiting — channel ${channel ? channel.readyState : 'missing'} (${queue.length} file(s))`);
+      return;
+    }
 
     if (this._sending.get(peerId)) return;
 
     const file = queue[0];
+    console.log(`[WebRTC] Starting send: ${file.name} (${queue.length} in queue)`);
     this._sending.set(peerId, true);
     this._sendFileDirect(peerId, file);
   }
