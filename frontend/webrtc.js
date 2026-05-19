@@ -491,9 +491,41 @@ export class WebRTCManager {
         this._processRelayQueue(peerId);
 
       } else if (meta.type === 'cancel') {
+        // Clean up receiver state if we were receiving
         this.incomingFiles.delete(peerId);
         if (this._flowState?.has(peerId)) this._flowState.delete(peerId);
         if (this.onProgress) this.onProgress(peerId, meta.filename || 'file', -1, 0, 'receive');
+
+        // Clean up sender state if we were sending
+        const sendState = this.activeSends.get(peerId);
+        if (sendState) {
+          sendState.cancelled = true;
+          this.activeSends.delete(peerId);
+        }
+        this._sending.delete(peerId);
+        this._batchTotals.delete(peerId);
+        this._pendingFiles.delete(peerId);
+        for (const key of [...this._ackFallbackTimers.keys()]) {
+          if (key.startsWith(`${peerId}:send:`)) {
+            clearTimeout(this._ackFallbackTimers.get(key));
+            this._ackFallbackTimers.delete(key);
+          }
+        }
+        if (this.onProgress) this.onProgress(peerId, meta.filename || 'file', -1, 0, 'send');
+
+        // Dequeue and move to the next file in the queues so we never get stuck
+        const queue = this._fileQueues?.get(peerId);
+        if (queue?.length > 0) {
+          const currentFile = queue[0];
+          dequeueIfHead(queue, currentFile);
+          this._processQueue(peerId);
+        }
+        const relayQueue = this._relayQueues?.get(peerId);
+        if (relayQueue?.length > 0) {
+          const currentFile = relayQueue[0];
+          dequeueIfHead(relayQueue, currentFile);
+          this._processRelayQueue(peerId);
+        }
       }
 
     } else {
@@ -901,14 +933,22 @@ export class WebRTCManager {
     const channel = this.channels.get(peerId);
     if (channel && channel.readyState === 'open') {
       channel.send(JSON.stringify({ type: 'cancel', filename: '' }));
+    } else {
+      this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'cancel', filename: '' }));
     }
     this.activeSends.delete(peerId);
   }
 
   cancelReceive(peerId) {
     this.incomingFiles.delete(peerId);
-    // Clean up flow state too so next file is accepted cleanly
     if (this._flowState?.has(peerId)) this._flowState.delete(peerId);
+    // Notify sender so they don't keep sending and don't get stuck
+    const channel = this.channels.get(peerId);
+    if (channel && channel.readyState === 'open') {
+      channel.send(JSON.stringify({ type: 'cancel', filename: '' }));
+    } else {
+      this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'cancel', filename: '' }));
+    }
   }
 
   // Wake Lock to prevent screen from sleeping during active sessions or transfers
