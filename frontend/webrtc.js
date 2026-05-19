@@ -496,7 +496,7 @@ export class WebRTCManager {
         if (this._flowState?.has(peerId)) this._flowState.delete(peerId);
         if (this.onProgress) this.onProgress(peerId, meta.filename || 'file', -1, 0, 'receive');
 
-        // Clean up sender state if we were sending (completely clear all send queues for this peer!)
+        // Clean up sender state if we were sending (cancel current file, preserve queue!)
         const sendState = this.activeSends.get(peerId);
         if (sendState) {
           sendState.cancelled = true;
@@ -506,12 +506,24 @@ export class WebRTCManager {
           this.activeSends.delete(peerId);
         }
         this._sending.delete(peerId);
-        this._batchTotals.delete(peerId);
         this._pendingFiles.delete(peerId);
-        if (this._fileQueues?.has(peerId)) this._fileQueues.delete(peerId);
-        if (this._relayQueues?.has(peerId)) this._relayQueues.delete(peerId);
+        
+        // Dequeue only the cancelled file from the head of the queue!
+        const queue = this._fileQueues?.get(peerId);
+        if (queue?.length > 0) {
+          const currentFile = queue[0];
+          dequeueIfHead(queue, currentFile);
+          this._processQueue(peerId);
+        }
+        const relayQueue = this._relayQueues?.get(peerId);
+        if (relayQueue?.length > 0) {
+          const currentFile = relayQueue[0];
+          dequeueIfHead(relayQueue, currentFile);
+          this._processRelayQueue(peerId);
+        }
+
         for (const key of [...this._ackFallbackTimers.keys()]) {
-          if (key.startsWith(`${peerId}:send:`)) {
+          if (key.startsWith(`${peerId}:send:${meta.filename}`)) {
             clearTimeout(this._ackFallbackTimers.get(key));
             this._ackFallbackTimers.delete(key);
           }
@@ -923,12 +935,22 @@ export class WebRTCManager {
       this.activeSends.delete(peerId);
     }
     this._sending.delete(peerId);
-    this._batchTotals.delete(peerId);
-    if (this._fileQueues?.has(peerId)) this._fileQueues.delete(peerId);
-    if (this._relayQueues?.has(peerId)) this._relayQueues.delete(peerId);
-    if (this._pendingFiles?.has(peerId)) this._pendingFiles.delete(peerId);
+    this._pendingFiles.delete(peerId);
+
+    // Dequeue only the cancelled file from the head of the queue!
+    const queue = this._fileQueues?.get(peerId);
+    if (queue?.length > 0) {
+      const currentFile = queue[0];
+      dequeueIfHead(queue, currentFile);
+    }
+    const relayQueue = this._relayQueues?.get(peerId);
+    if (relayQueue?.length > 0) {
+      const currentFile = relayQueue[0];
+      dequeueIfHead(relayQueue, currentFile);
+    }
+
     for (const key of [...this._ackFallbackTimers.keys()]) {
-      if (key.startsWith(`${peerId}:send:`)) {
+      if (key.startsWith(`${peerId}:send:${filename}`)) {
         clearTimeout(this._ackFallbackTimers.get(key));
         this._ackFallbackTimers.delete(key);
       }
@@ -944,6 +966,13 @@ export class WebRTCManager {
       }
     } else {
       this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'cancel', filename }));
+    }
+
+    // Process the next file in the queue!
+    if (queue?.length > 0) {
+      this._processQueue(peerId);
+    } else if (relayQueue?.length > 0) {
+      this._processRelayQueue(peerId);
     }
   }
 
