@@ -149,12 +149,11 @@ function init() {
         uiManager.showToast(`📥 "${filename}" received from ${peerName}!`);
         uiManager.setPeerStatus(peerId, 'Ready to receive');
       }
-        // Notify WebRTC manager about transfer completion for wake lock management
-        if (webrtcManager._decrementActiveTransfers) {
-          webrtcManager._decrementActiveTransfers();
-        }
+      // Notify WebRTC manager about transfer completion for wake lock management
+      if (webrtcManager._decrementActiveTransfers) {
+        webrtcManager._decrementActiveTransfers();
       }
-    )
+    }
   );
 
   // Propagate initial peer presence to the WebRTC manager
