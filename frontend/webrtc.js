@@ -172,7 +172,18 @@ export class WebRTCManager {
         const ch = this.channels.get(peerId);
         if (ch?.readyState === 'open') this._processQueue(peerId);
       }
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      if (pc.connectionState === 'failed') {
+        const hasQueuedFiles = this._fileQueues?.get(peerId)?.length > 0;
+        if (hasQueuedFiles) {
+          console.log(`[WebRTC] Direct connection failed for ${peerId}, falling back to relay instantly`);
+          this._clearSendTimer(peerId);
+          this._closeConnectionForPeer(peerId);
+          this._flushQueueToRelay(peerId);
+        } else {
+          this.connections.delete(peerId);
+          this.channels.delete(peerId);
+        }
+      } else if (pc.connectionState === 'closed') {
         this.connections.delete(peerId);
         this.channels.delete(peerId);
       }
