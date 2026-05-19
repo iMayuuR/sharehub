@@ -1,7 +1,7 @@
 // webrtc.js - Enhanced logging for debugging
 
 // 2MB chunks for direct transfers — local network high throughput
-const CHUNK_SIZE = 2 * 1024 * 1024;
+const CHUNK_SIZE = 4 * 1024 * 1024; // larger chunks for higher throughput
 // 256KB relay chunks (base64 overhead is ~33%, keep smaller)
 const RELAY_CHUNK_SIZE = 256 * 1024;
 
@@ -515,7 +515,7 @@ export class WebRTCManager {
 
     const fileName = ensureExtension(file.name, file.type);
     const fc = this._flowCtrl?.get(peerId);
-    const threshold = fc?.threshold || (16 * 1024 * 1024);
+    const threshold = fc?.threshold || (32 * 1024 * 1024); // higher default for fast LAN
     channel.bufferedAmountLowThreshold = threshold;
     console.log(`[WebRTC] Starting direct send to ${peerId}: ${fileName} (${file.size} bytes, threshold=${(threshold/1024/1024).toFixed(1)}MB)`);
 

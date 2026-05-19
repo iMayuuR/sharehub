@@ -75,6 +75,8 @@ function init() {
         if (pId !== identity.id && !peerMetadata.has(pId)) {
           // We don't know their name/avatar yet, add with placeholders
           uiManager.addPeer(pId, 'Unknown Device', '💻');
+          // Pre-connect to enable fast file transfer once they announce
+          webrtcManager.preConnect(pId);
         }
       });
     },
