@@ -1,11 +1,11 @@
 // webrtc.js - Enhanced logging for debugging
 import { fileKey, enqueueFile, dequeueIfHead, queueRemaining } from './transfer-queue.js';
 
-// 128KB chunks — sweet spot for high-speed WebRTC SCTP pipeline
-const CHUNK_SIZE = 128 * 1024;
-// Keep SCTP buffer low (around 1MB) to prevent browser throttling/congestion
-const LAN_BUFFER_THRESHOLD = 1 * 1024 * 1024;
-const LAN_BUFFER_THRESHOLD_MAX = 2 * 1024 * 1024;
+// 4MB chunks — balance throughput vs browser SCTP limits
+const CHUNK_SIZE = 4 * 1024 * 1024;
+// MUST stay below browser SCTP buffer (~16MB). 64MB breaks bufferedamountlow → send hangs forever.
+const LAN_BUFFER_THRESHOLD = 4 * 1024 * 1024;
+const LAN_BUFFER_THRESHOLD_MAX = 16 * 1024 * 1024;
 // 256KB relay chunks (base64 overhead is ~33%, keep smaller)
 const RELAY_CHUNK_SIZE = 256 * 1024;
 const SEND_ACK_FALLBACK_MS = 15000;
@@ -751,13 +751,9 @@ export class WebRTCManager {
   }
 
   arrayBufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
     let binary = '';
-    const len = bytes.byteLength;
-    const chunk = 8192;
-    for (let i = 0; i < len; i += chunk) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-    }
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
     return window.btoa(binary);
   }
 
