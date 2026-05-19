@@ -1,10 +1,10 @@
 // webrtc.js - Enhanced logging for debugging
 import { fileKey, enqueueFile, dequeueIfHead, queueRemaining } from './transfer-queue.js';
 
-// 4MB chunks — balance throughput vs browser SCTP limits
-const CHUNK_SIZE = 4 * 1024 * 1024;
-// MUST stay below browser SCTP buffer (~16MB). 64MB breaks bufferedamountlow → send hangs forever.
-const LAN_BUFFER_THRESHOLD = 4 * 1024 * 1024;
+// 16MB chunks — browser SCTP max buffer limit
+const CHUNK_SIZE = 16 * 1024 * 1024;
+// Keep it exactly at browser limit for maximum local high-speed throughput
+const LAN_BUFFER_THRESHOLD = 16 * 1024 * 1024;
 const LAN_BUFFER_THRESHOLD_MAX = 16 * 1024 * 1024;
 // 256KB relay chunks (base64 overhead is ~33%, keep smaller)
 const RELAY_CHUNK_SIZE = 256 * 1024;
