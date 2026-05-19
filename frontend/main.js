@@ -15,9 +15,15 @@ window.myIdentityId = identity.id;
 const peerMetadata = new Map();
 
 function init() {
-  uiManager = new UIManager((peerId, file) => {
-    // When user tries to send a file
-    webrtcManager.sendFile(peerId, file);
+  uiManager = new UIManager((peerId, fileOrFiles) => {
+    const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+    if (files.length > 1) {
+      uiManager.showTransferSheet();
+      uiManager.showToast(`Sending ${files.length} files…`);
+      webrtcManager.sendFiles(peerId, files);
+    } else {
+      webrtcManager.sendFile(peerId, files[0]);
+    }
   });
   
   uiManager.setIdentity(identity);
@@ -92,7 +98,7 @@ function init() {
       }
       // Backup ACK via signaling (when data channel ACK fails)
       if (signal.action === 'ack') {
-         if (webrtcManager.onFileComplete) webrtcManager.onFileComplete(fromPeerId, signal.filename, 'send');
+         webrtcManager._completeSend(fromPeerId, signal.filename);
          return;
       }
       // Otherwise it's an RTC signal
@@ -116,13 +122,19 @@ function init() {
       uiManager.updateProgress(peerId, filename, progress, totalSize, direction);
     },
     (peerId, filename, direction) => {
-      // File transfer confirmed
       uiManager.markTransferComplete(peerId, filename, direction);
       const peerName = peerMetadata.get(peerId)?.name || 'Device';
+      const q = webrtcManager.getQueueStatus(peerId);
       if (direction === 'send') {
         uiManager.showToast(`✅ "${filename}" sent to ${peerName}!`);
+        if (q.pending > 0) {
+          uiManager.setPeerStatus(peerId, `Sending… ${q.pending} file(s) remaining`);
+        } else {
+          uiManager.setPeerStatus(peerId, 'Ready to receive');
+        }
       } else {
         uiManager.showToast(`📥 "${filename}" received from ${peerName}!`);
+        uiManager.setPeerStatus(peerId, 'Ready to receive');
       }
       // Notify WebRTC manager about transfer completion for wake lock management
       if (webrtcManager._decrementActiveTransfers) {
@@ -132,11 +144,18 @@ function init() {
   );
 
   // Transfer start notifications
-  webrtcManager.onTransferStart = (peerId, filename, direction) => {
+  webrtcManager.onTransferStart = (peerId, filename, direction, meta) => {
+    uiManager.showTransferSheet();
     const peerName = peerMetadata.get(peerId)?.name || 'Device';
     if (direction === 'send') {
-      uiManager.setPeerStatus(peerId, `Sending "${filename}"...`);
-      uiManager.showToast(`⬆ Sending "${filename}" to ${peerName}...`);
+      const q = webrtcManager.getQueueStatus(peerId);
+      if (meta?.batchTotal > 1 || q.pending > 1) {
+        const total = meta?.batchTotal || q.pending;
+        uiManager.setPeerStatus(peerId, `Sending files (${total} queued)…`);
+      } else {
+        uiManager.setPeerStatus(peerId, `Sending "${filename}"…`);
+        uiManager.showToast(`⬆ Sending "${filename}" to ${peerName}…`);
+      }
     } else {
       uiManager.setPeerStatus(peerId, `Receiving "${filename}"...`);
       uiManager.showToast(`⬇ Receiving "${filename}" from ${peerName}...`);

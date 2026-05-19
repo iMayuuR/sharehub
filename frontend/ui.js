@@ -211,7 +211,7 @@ export class UIManager {
         <h3></h3>
         <p class="peer-status">Ready to receive</p>
       </div>
-      <button class="btn-send">Send File</button>
+      <button class="btn-send">Send Files</button>
     `;
 
     card.querySelector('.avatar').textContent = avatar;
@@ -235,9 +235,8 @@ export class UIManager {
       card.classList.remove('drag-over');
       if (e.dataTransfer.files.length > 0 && this.onPeerClick) {
         this.selectPeer(peerId);
-        Array.from(e.dataTransfer.files).forEach(file => {
-          this.onPeerClick(peerId, file);
-        });
+        const files = Array.from(e.dataTransfer.files);
+        this.onPeerClick(peerId, files.length === 1 ? files[0] : files);
       }
     });
 
@@ -246,10 +245,11 @@ export class UIManager {
       this.selectPeer(peerId);
 
       if (window.pendingShareFiles && window.pendingShareFiles.length > 0) {
-        window.pendingShareFiles.forEach(f => {
-          if (this.onPeerClick) this.onPeerClick(peerId, f);
-        });
+        const pending = window.pendingShareFiles.slice();
         window.pendingShareFiles = [];
+        if (this.onPeerClick) {
+          this.onPeerClick(peerId, pending.length === 1 ? pending[0] : pending);
+        }
         this.emptyState.innerHTML = `
           <div class="radar-animation">
             <div class="radar-dot" style="top: 20%; left: 60%; animation-delay: 0.5s;"></div>
@@ -266,10 +266,10 @@ export class UIManager {
 
       this.fileInput.onchange = (e) => {
         if (e.target.files.length > 0 && this.onPeerClick) {
-          // Handle multiple files
-          Array.from(e.target.files).forEach(file => {
-            this.onPeerClick(peerId, file);
-          });
+          const files = Array.from(e.target.files);
+          this.showTransferSheet();
+          this.onPeerClick(peerId, files.length === 1 ? files[0] : files);
+          this.fileInput.value = '';
         }
       };
       this.fileInput.click();
@@ -349,7 +349,6 @@ export class UIManager {
       return;
     }
 
-    // Show transfer sheet if there are active transfers
     if (this.activeTransfers.size > 0) {
       this.showTransferSheet();
       this.transferTitle.textContent = "Transfers in Progress";
@@ -549,7 +548,9 @@ export class UIManager {
       this.showToast(`📥 "${filename}" received!`);
     }
 
-    this.setPeerStatus(peerId, 'Ready to receive');
+    if (direction === 'receive') {
+      this.setPeerStatus(peerId, 'Ready to receive');
+    }
   }
 
   /**

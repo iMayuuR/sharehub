@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test transfer-queue.test.js"
   },
   "devDependencies": {
     "vite": "^8.0.9"

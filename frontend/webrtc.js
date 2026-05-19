@@ -1,9 +1,13 @@
 // webrtc.js - Enhanced logging for debugging
+import { fileKey, enqueueFile, dequeueIfHead, queueRemaining } from './transfer-queue.js';
 
-// 2MB chunks for direct transfers — local network high throughput
-const CHUNK_SIZE = 4 * 1024 * 1024; // larger chunks for higher throughput
+// 8MB chunks — fewer round-trips for 500MB+ files on same Wi‑Fi (~4+ MB/s target)
+const CHUNK_SIZE = 8 * 1024 * 1024;
+// Default in-flight buffer for fast LAN (64MB ≈ 8 chunks pipelined)
+const LAN_BUFFER_THRESHOLD = 64 * 1024 * 1024;
 // 256KB relay chunks (base64 overhead is ~33%, keep smaller)
 const RELAY_CHUNK_SIZE = 256 * 1024;
+const SEND_ACK_FALLBACK_MS = 15000;
 
 // Extension recovery for files missing extensions (Android gallery)
 const MIME_TO_EXT = {
@@ -42,6 +46,38 @@ export class WebRTCManager {
     this.activeTransferCount = 0;
     this.wakeLock = null;
     this._pendingFiles = new Map(); // peerId → file currently being sent (for channel-close recovery)
+    this._sending = new Map(); // peerId → true while a direct send is active
+    this._completedSendKeys = new Set(); // dedupe onFileComplete
+    this._batchTotals = new Map(); // peerId → total files in current batch
+    this._ackFallbackTimers = new Map(); // ackKey → timeout id
+  }
+
+  /** Idempotent send-complete (data channel ACK, signaling ACK, or fallback timer). */
+  _completeSend(peerId, filename) {
+    const ackKey = `${peerId}:send:${filename}`;
+    if (this._completedSendKeys.has(ackKey)) return false;
+    this._completedSendKeys.add(ackKey);
+    const t = this._ackFallbackTimers.get(ackKey);
+    if (t) {
+      clearTimeout(t);
+      this._ackFallbackTimers.delete(ackKey);
+    }
+    if (this.onFileComplete) this.onFileComplete(peerId, filename, 'send');
+    return true;
+  }
+
+  /** Queue multiple files for one peer — sends back-to-back on same data channel */
+  sendFiles(peerId, files) {
+    if (!files?.length) return;
+    const list = Array.from(files);
+    console.log(`[WebRTC] Queuing ${list.length} file(s) for ${peerId}`);
+    this._batchTotals.set(peerId, list.length);
+    const channel = this.channels.get(peerId);
+    if (!channel || channel.readyState !== 'open') {
+      this.preConnect(peerId);
+      if (list[0]) this._pendingFiles.set(peerId, list[0]);
+    }
+    for (const file of list) this._enqueueFile(peerId, file);
   }
 
   // "Polite peer" pattern: The peer with the SMALLER ID is "polite"
@@ -169,7 +205,6 @@ export class WebRTCManager {
     if (!this._isPolite(peerId)) {
       const channel = pc.createDataChannel('fileTransfer', {
         ordered: true,
-        maxPacketLifeTime: 250, // 250ms max — faster delivery for local network
         negotiated: false
       });
       this.setupChannel(peerId, channel);
@@ -179,7 +214,7 @@ export class WebRTCManager {
   setupChannel(peerId, channel) {
     channel.binaryType = 'arraybuffer';
     if (typeof channel.bufferedAmountLowThreshold !== 'undefined') {
-      channel.bufferedAmountLowThreshold = 16 * 1024 * 1024;
+      channel.bufferedAmountLowThreshold = LAN_BUFFER_THRESHOLD;
     }
     this.channels.set(peerId, channel);
 
@@ -197,8 +232,11 @@ export class WebRTCManager {
     };
     channel.onclose = () => {
       this.channels.delete(peerId);
-      // Note: queue is NOT destroyed here — _sendFileDirect will handle recovery.
-      // _pendingFiles is set when an active send loses its channel.
+      this._sending.delete(peerId);
+      const q = this._fileQueues?.get(peerId);
+      if (q?.length && !this._pendingFiles.has(peerId)) {
+        this._pendingFiles.set(peerId, q[0]);
+      }
     };
     channel.onmessage = (event) => {
       this.handleIncomingData(peerId, event.data);
@@ -350,13 +388,9 @@ export class WebRTCManager {
         }
 
       } else if (meta.type === 'ack') {
-        // Adjust flow control for future sends based on observed throughput
         if (meta.avgMbps) this._adjustFlowControl(peerId, { mbps: meta.avgMbps });
-        if (this.onFileComplete) this.onFileComplete(peerId, meta.filename, 'send');
-        // ACK received — clear waiting flag so next queued file can start (both direct + relay)
+        this._completeSend(peerId, meta.filename);
         if (this._senderWaitingAck) this._senderWaitingAck.delete(peerId);
-        console.log(`[WebRTC] ACK received for ${meta.filename} from ${peerId}, resuming queues`);
-        this._processQueue(peerId);
         this._processRelayQueue(peerId);
 
       } else if (meta.type === 'cancel') {
@@ -448,15 +482,15 @@ export class WebRTCManager {
 
     } else if (retryCount < 4) {
       console.log(`[WebRTC] Retry ${retryCount} for ${peerId} — closing stale connection`);
-      this._closeConnectionForPeer(peerId); // Force fresh connection on retry
-      this._enqueueFile(peerId, file);
+      this._closeConnectionForPeer(peerId);
+      this.preConnect(peerId);
       setTimeout(() => this.sendFile(peerId, file, retryCount + 1), 2000);
 
     } else {
       // Max retries — remove from direct queue and fall to relay
       if (this._fileQueues?.has(peerId)) {
         const q = this._fileQueues.get(peerId);
-        const idx = q.findIndex(f => f.name === file.name);
+        const idx = q.findIndex(f => fileKey(f) === fileKey(file));
         if (idx !== -1) q.splice(idx, 1);
       }
       this._pendingFiles.delete(peerId);
@@ -466,21 +500,24 @@ export class WebRTCManager {
     }
   }
 
-  // Per-peer file queue — ensures multiple files are sent sequentially
   _enqueueFile(peerId, file) {
     if (!this._fileQueues) this._fileQueues = new Map();
     if (!this._fileQueues.has(peerId)) this._fileQueues.set(peerId, []);
     const queue = this._fileQueues.get(peerId);
-    // Avoid duplicate same-file references in queue
-    if (queue.some(f => f.name === file.name)) {
+    const { added } = enqueueFile(queue, file);
+    if (!added) {
       console.log(`[WebRTC] File "${file.name}" already queued for ${peerId}, skipping duplicate`);
       return;
     }
-    queue.push(file);
-    // Kick off processing if this is the only file in queue
-    if (queue.length === 1) {
-      this._processQueue(peerId);
-    }
+    this._processQueue(peerId);
+  }
+
+  getQueueStatus(peerId) {
+    const queue = this._fileQueues?.get(peerId) || [];
+    const sending = !!this._sending.get(peerId);
+    const remaining = queueRemaining(queue);
+    const batchTotal = this._batchTotals.get(peerId) || queue.length;
+    return { pending: remaining, sending, total: batchTotal };
   }
 
   _processQueue(peerId) {
@@ -491,90 +528,129 @@ export class WebRTCManager {
     const channel = this.channels.get(peerId);
     if (!channel || channel.readyState !== 'open') return;
 
-    // Don't start next file if still waiting for ACK of previous file
-    if (this._senderWaitingAck?.get(peerId)) {
-      console.log(`[WebRTC] Queue blocked for ${peerId}: still waiting for ACK of previous file`);
-      return;
-    }
+    if (this._sending.get(peerId)) return;
 
     const file = queue[0];
-    this._sendFileDirect(peerId, file, () => {
-      // on done callback — dequeue and process next
-      queue.shift();
-      this._processQueue(peerId);
-    });
+    this._sending.set(peerId, true);
+    this._sendFileDirect(peerId, file);
   }
 
-  _sendFileDirect(peerId, file, onDone) {
+  _finishDirectSend(peerId, file, fileName) {
+    this._sending.delete(peerId);
+    const queue = this._fileQueues?.get(peerId);
+    if (queue) dequeueIfHead(queue, file);
+
+    if (this.onProgress) this.onProgress(peerId, fileName, 100, file.size, 'send');
+
+    const ackKey = `${peerId}:send:${fileName}`;
+    const fallback = setTimeout(() => this._completeSend(peerId, fileName), SEND_ACK_FALLBACK_MS);
+    this._ackFallbackTimers.set(ackKey, fallback);
+
+    const channel = this.channels.get(peerId);
+    const startNext = () => {
+      const left = queue?.length || 0;
+      if (left > 0) console.log(`[WebRTC] Pipelining next file (${left} in queue) to ${peerId}`);
+      else this._batchTotals.delete(peerId);
+      this._processQueue(peerId);
+    };
+
+    if (channel?.readyState === 'open' && channel.bufferedAmount > 0) {
+      channel.onbufferedamountlow = () => {
+        channel.onbufferedamountlow = null;
+        startNext();
+      };
+    } else {
+      startNext();
+    }
+  }
+
+  _sendFileDirect(peerId, file) {
     const channel = this.channels.get(peerId);
     if (!channel || channel.readyState !== 'open') {
-      // Channel closed — DON'T shift queue. _processQueue will retry when channel reopens.
       console.warn(`[WebRTC] Channel not open for ${peerId}, will retry on reopen`);
+      this._sending.delete(peerId);
       return;
     }
 
     const fileName = ensureExtension(file.name, file.type);
     const fc = this._flowCtrl?.get(peerId);
-    const threshold = fc?.threshold || (32 * 1024 * 1024); // higher default for fast LAN
-    channel.bufferedAmountLowThreshold = threshold;
-    console.log(`[WebRTC] Starting direct send to ${peerId}: ${fileName} (${file.size} bytes, threshold=${(threshold/1024/1024).toFixed(1)}MB)`);
+    const threshold = fc?.threshold || LAN_BUFFER_THRESHOLD;
+    if (channel.bufferedAmountLowThreshold !== undefined) {
+      channel.bufferedAmountLowThreshold = threshold;
+    }
+    const queue = this._fileQueues?.get(peerId) || [];
+    const batchTotal = this._batchTotals.get(peerId) || queue.length;
+    console.log(`[WebRTC] Direct send to ${peerId}: ${fileName} (${(file.size / 1024 / 1024).toFixed(1)} MB, queue=${queue.length}, threshold=${(threshold / 1024 / 1024).toFixed(0)}MB)`);
 
     const sendState = { cancelled: false };
     this.activeSends.set(peerId, sendState);
 
-    if (this.onTransferStart) this.onTransferStart(peerId, fileName, 'send');
+    if (this.onTransferStart) {
+      this.onTransferStart(peerId, fileName, 'send', { batchTotal, batchRemaining: queue.length });
+    }
 
-    const header = { type: 'header', name: fileName, size: file.size, mimeType: file.type };
-    channel.send(JSON.stringify(header));
+    channel.send(JSON.stringify({ type: 'header', name: fileName, size: file.size, mimeType: file.type }));
     if (this.onProgress) this.onProgress(peerId, fileName, 0, file.size, 'send');
 
     let offset = 0;
-    let prefetchBuf = null; // Read-ahead buffer
-    let prefetchOffset = 0;
+    let prefetchBuf = null;
+    let prefetchOffset = Math.min(CHUNK_SIZE, file.size);
     const reader = new FileReader();
-    const fileReader2 = new FileReader(); // Second reader for prefetch
+    const prefetchReader = new FileReader();
 
-    // Read first chunk synchronously
-    const firstSlice = file.slice(0, CHUNK_SIZE);
-    reader.readAsArrayBuffer(firstSlice);
-
-    const readNextInto = (targetReader, o) => {
-      const slice = file.slice(o, o + CHUNK_SIZE);
-      targetReader.readAsArrayBuffer(slice);
+    const readNextInto = (targetReader, at) => {
+      if (at >= file.size) return;
+      targetReader.readAsArrayBuffer(file.slice(at, Math.min(at + CHUNK_SIZE, file.size)));
     };
 
-    // Prefetch next chunk while current one sends
     const prefetchNext = () => {
-      if (prefetchOffset < file.size) {
-        readNextInto(fileReader2, prefetchOffset);
-      }
+      if (prefetchOffset < file.size) readNextInto(prefetchReader, prefetchOffset);
     };
-
-    // Start prefetching immediately
-    prefetchOffset = CHUNK_SIZE;
-    prefetchNext();
 
     const sendChunk = (buf) => {
       if (sendState.cancelled) {
-        console.log(`[WebRTC] Send cancelled for ${peerId}`);
         this.activeSends.delete(peerId);
-        if (onDone) onDone();
+        this._sending.delete(peerId);
         return;
       }
 
-      if (channel.bufferedAmount > channel.bufferedAmountLowThreshold) {
-        const handler = () => {
+      const flush = () => {
+        while (prefetchBuf && channel.bufferedAmount <= threshold && offset < file.size) {
+          const tmp = prefetchBuf;
+          prefetchBuf = null;
+          readNextInto(prefetchReader, prefetchOffset);
+          prefetchOffset = Math.min(prefetchOffset + tmp.byteLength, file.size);
+          try {
+            channel.send(tmp);
+          } catch (err) {
+            if (err.name === 'OperationError') {
+              prefetchBuf = tmp;
+              channel.onbufferedamountlow = () => {
+                channel.onbufferedamountlow = null;
+                flush();
+              };
+              return;
+            }
+            throw err;
+          }
+          offset += tmp.byteLength;
+          const p = Math.min((offset / file.size) * 100, 99.9);
+          if (this.onProgress) this.onProgress(peerId, fileName, p, file.size, 'send');
+        }
+      };
+
+      if (channel.bufferedAmount > threshold) {
+        channel.onbufferedamountlow = () => {
           channel.onbufferedamountlow = null;
           sendChunk(buf);
         };
-        channel.onbufferedamountlow = handler;
         return;
       }
 
       try {
         channel.send(buf);
       } catch (err) {
-        if (err.name === 'OperationError' && err.message.includes('send queue is full')) {
+        if (err.name === 'OperationError') {
           channel.onbufferedamountlow = () => {
             channel.onbufferedamountlow = null;
             sendChunk(buf);
@@ -585,50 +661,34 @@ export class WebRTCManager {
       }
 
       offset += buf.byteLength;
-      const progress = Math.min((offset / file.size) * 100, 100);
+      const progress = Math.min((offset / file.size) * 100, 99.9);
       if (this.onProgress) this.onProgress(peerId, fileName, progress, file.size, 'send');
 
       if (offset >= file.size) {
-        if (this.onProgress) this.onProgress(peerId, fileName, 100, file.size, 'send');
         channel.send(JSON.stringify({ type: 'done' }));
         this.activeSends.delete(peerId);
-        // Wait for peer ACK before dequeue — prevents file2 chunks from mixing with
-        // file1 chunks on receiver when peer hasn't confirmed file1 yet
-        if (!this._senderWaitingAck) this._senderWaitingAck = new Map();
-        this._senderWaitingAck.set(peerId, true);
-        setTimeout(() => {
-          // Safety: if ACK didn't arrive in 8s, still allow next file (proceed)
-          if (this._senderWaitingAck?.get(peerId)) {
-            this._senderWaitingAck.delete(peerId);
-            this._processQueue(peerId); // resume queue
-          }
-          if (this.onFileComplete) this.onFileComplete(peerId, fileName, 'send');
-        }, 8000);
+        this._finishDirectSend(peerId, file, fileName);
         return;
       }
 
-      // Use prefetched buffer, then read new chunk
+      flush();
+
       if (prefetchBuf) {
         const tmp = prefetchBuf;
         prefetchBuf = null;
-
-        // Read next into the OTHER reader while we send prefetched
-        readNextInto(fileReader2, prefetchOffset);
-        prefetchOffset += CHUNK_SIZE;
-
+        readNextInto(prefetchReader, prefetchOffset);
+        prefetchOffset = Math.min(prefetchOffset + tmp.byteLength, file.size);
         sendChunk(tmp);
       } else {
-        // No prefetch — block on read (fallback, rare)
-        reader.readAsArrayBuffer(file.slice(offset, offset + CHUNK_SIZE));
+        readNextInto(reader, offset);
       }
     };
 
-    // Main reader: when first chunk is ready, start sending and prefetch
+    prefetchReader.onload = (e) => { prefetchBuf = e.target.result; };
     reader.onload = (e) => sendChunk(e.target.result);
 
-    fileReader2.onload = (e) => {
-      prefetchBuf = e.target.result;
-    };
+    readNextInto(reader, 0);
+    if (file.size > CHUNK_SIZE) prefetchNext();
   }
 
   arrayBufferToBase64(buffer) {
@@ -669,7 +729,7 @@ export class WebRTCManager {
     if (!this._flowCtrl) this._flowCtrl = new Map();
     let fc = this._flowCtrl.get(peerId);
     if (!fc) {
-      fc = { threshold: 16 * 1024 * 1024, lastMbps: 0, steadySends: 0 };
+      fc = { threshold: LAN_BUFFER_THRESHOLD, lastMbps: 0, steadySends: 0 };
       this._flowCtrl.set(peerId, fc);
     }
 
@@ -688,8 +748,7 @@ export class WebRTCManager {
       // Halve threshold, min 1MB — prevents buffering too much on slow link
       fc.threshold = Math.max(1024 * 1024, fc.threshold * 0.5);
     } else if (mbps > 20 && buf < fc.threshold * 0.5) {
-      // Fast + buffer draining fast: increase, max 32MB
-      fc.threshold = Math.min(32 * 1024 * 1024, fc.threshold * 1.25);
+      fc.threshold = Math.min(LAN_BUFFER_THRESHOLD, fc.threshold * 1.25);
     }
 
     // Apply new threshold if changed significantly
@@ -715,24 +774,10 @@ export class WebRTCManager {
     const queue = this._relayQueues.get(peerId);
     if (!queue || queue.length === 0) return;
 
-    // Block if still waiting for ACK of previous file relay transfer
-    if (this._senderWaitingAck?.get(peerId)) {
-      console.log(`[WebRTC] Relay queue blocked for ${peerId}: waiting for ACK`);
-      return;
-    }
-
     const file = queue[0];
     this._sendFileRelayDirect(peerId, file, () => {
-      // Wait for ACK before dequeue — same as direct path
-      if (!this._senderWaitingAck) this._senderWaitingAck = new Map();
-      this._senderWaitingAck.set(peerId, true);
-      setTimeout(() => {
-        if (this._senderWaitingAck?.get(peerId)) {
-          this._senderWaitingAck.delete(peerId);
-          queue.shift();
-          this._processRelayQueue(peerId);
-        }
-      }, 8000);
+      dequeueIfHead(queue, file);
+      this._processRelayQueue(peerId);
     });
   }
 
@@ -765,7 +810,9 @@ export class WebRTCManager {
       } else {
         this.signalingClient.sendRelay(peerId, JSON.stringify({ type: 'done' }));
         this.activeSends.delete(peerId);
-        if (this.onFileComplete) this.onFileComplete(peerId, fileName, 'send');
+        const ackKey = `${peerId}:send:${fileName}`;
+        const fallback = setTimeout(() => this._completeSend(peerId, fileName), SEND_ACK_FALLBACK_MS);
+        this._ackFallbackTimers.set(ackKey, fallback);
         if (onDone) onDone();
       }
     };
@@ -778,15 +825,19 @@ export class WebRTCManager {
   }
 
   cancelSend(peerId) {
-    // Cancel current file being sent
     const sendState = this.activeSends.get(peerId);
-    if (sendState) {
-      sendState.cancelled = true;
-    }
-    // Clear all queued files for this peer
+    if (sendState) sendState.cancelled = true;
+    this._sending.delete(peerId);
+    this._batchTotals.delete(peerId);
     if (this._fileQueues?.has(peerId)) this._fileQueues.delete(peerId);
     if (this._relayQueues?.has(peerId)) this._relayQueues.delete(peerId);
     if (this._pendingFiles?.has(peerId)) this._pendingFiles.delete(peerId);
+    for (const key of [...this._ackFallbackTimers.keys()]) {
+      if (key.startsWith(`${peerId}:send:`)) {
+        clearTimeout(this._ackFallbackTimers.get(key));
+        this._ackFallbackTimers.delete(key);
+      }
+    }
     // Notify receiver so they don't wait
     const channel = this.channels.get(peerId);
     if (channel && channel.readyState === 'open') {
