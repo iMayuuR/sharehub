@@ -50,10 +50,15 @@ function init() {
     identity.avatar = newId.avatar;
   });
 
+  const activePeers = new Set();
+
   // Setup Signaling
   signalingClient = new SignalingClient(
     identity.id,
     (joinedPeerId) => {
+      activePeers.add(joinedPeerId);
+      if (webrtcManager) webrtcManager.onPeerPresenceChange(activePeers.size > 0);
+
       // Peer joined - we only announce ourselves if we're in discoverable mode
       if (isDiscoverable) {
         signalingClient.sendSignal(joinedPeerId, { action: 'announce', name: identity.name, avatar: identity.avatar });
@@ -62,10 +67,19 @@ function init() {
       webrtcManager.preConnect(joinedPeerId);
     },
     (leftPeerId) => {
+      activePeers.delete(leftPeerId);
+      if (webrtcManager) webrtcManager.onPeerPresenceChange(activePeers.size > 0);
+
       uiManager.removePeer(leftPeerId);
       peerMetadata.delete(leftPeerId);
     },
     (peersList) => {
+      activePeers.clear();
+      peersList.forEach(pId => {
+        if (pId !== identity.id) activePeers.add(pId);
+      });
+      if (webrtcManager) webrtcManager.onPeerPresenceChange(activePeers.size > 0);
+
       // Current peers, announce myself to them only if discoverable
       if (isDiscoverable) {
         peersList.forEach(pId => {
@@ -135,12 +149,16 @@ function init() {
         uiManager.showToast(`📥 "${filename}" received from ${peerName}!`);
         uiManager.setPeerStatus(peerId, 'Ready to receive');
       }
-      // Notify WebRTC manager about transfer completion for wake lock management
-      if (webrtcManager._decrementActiveTransfers) {
-        webrtcManager._decrementActiveTransfers();
+        // Notify WebRTC manager about transfer completion for wake lock management
+        if (webrtcManager._decrementActiveTransfers) {
+          webrtcManager._decrementActiveTransfers();
+        }
       }
-    }
+    )
   );
+
+  // Propagate initial peer presence to the WebRTC manager
+  webrtcManager.onPeerPresenceChange(activePeers.size > 0);
 
   webrtcManager.onSendFailed = (peerId, filename, reason) => {
     uiManager.showToast(`⚠️ Send failed: ${reason}`);

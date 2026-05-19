@@ -900,8 +900,9 @@ export class WebRTCManager {
     if (this._flowState?.has(peerId)) this._flowState.delete(peerId);
   }
 
-  // Wake Lock to prevent screen from sleeping during transfers
+  // Wake Lock to prevent screen from sleeping during active sessions or transfers
   async _requestWakeLock() {
+    if (this.wakeLock) return;
     try {
       if ('wakeLock' in navigator) {
         this.wakeLock = await navigator.wakeLock.request('screen');
@@ -924,34 +925,42 @@ export class WebRTCManager {
     }
   }
 
+  // Dynamic wake lock state updater based on peers presence or active transfers
+  _updateWakeLockState() {
+    const shouldKeepAwake = this.hasPeers || this.activeTransferCount > 0;
+    if (shouldKeepAwake) {
+      this._requestWakeLock();
+    } else {
+      this._releaseWakeLock();
+    }
+  }
+
+  // Hook called by main.js when peer presence changes
+  onPeerPresenceChange(hasPeers) {
+    this.hasPeers = hasPeers;
+    this._updateWakeLockState();
+  }
+
   // Pause all active transfers (called when app goes to background/screen off)
-  // We keep transfers active; only UI updates might be affected.
   pauseTransfers() {
-    // No-op: transfers continue via WebRTC data channels; wake lock keeps screen awake.
+    // Keep signaling alive, transfers proceed via WebRTC or Relay in background
   }
 
   // Resume all transfers (when app comes to foreground)
-  // No-op: transfers were never paused.
   resumeTransfers() {
-    // No-op
+    this._updateWakeLockState();
   }
 
   // Track active transfers for wake lock management
   _incrementActiveTransfers() {
     this.activeTransferCount++;
-    if (this.activeTransferCount === 1) {
-      // First transfer started, request wake lock
-      this._requestWakeLock();
-    }
+    this._updateWakeLockState();
   }
 
   _decrementActiveTransfers() {
     if (this.activeTransferCount > 0) {
       this.activeTransferCount--;
-      if (this.activeTransferCount === 0) {
-        // No more active transfers, release wake lock
-        this._releaseWakeLock();
-      }
+      this._updateWakeLockState();
     }
   }
 
