@@ -53,6 +53,7 @@ export class WebRTCManager {
     this._batchTotals = new Map(); // peerId → total files in current batch
     this._ackFallbackTimers = new Map(); // ackKey → timeout id
     this._sendTimers = new Map(); // peerId → connection wait timer
+    this._retryCounts = new Map(); // peerId → current connection retry count
   }
 
   /** Idempotent send-complete (data channel ACK, signaling ACK, or fallback timer). */
@@ -172,7 +173,21 @@ export class WebRTCManager {
         const ch = this.channels.get(peerId);
         if (ch?.readyState === 'open') this._processQueue(peerId);
       }
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      if (pc.connectionState === 'failed') {
+        this._closeConnectionForPeer(peerId);
+        const hasQueuedFiles = this._fileQueues?.get(peerId)?.length > 0;
+        if (hasQueuedFiles) {
+          const retryCount = this._retryCounts?.get(peerId) || 0;
+          if (retryCount < 3) {
+            console.log(`[WebRTC] Connection failed, triggering retry ${retryCount + 1} for ${peerId}`);
+            this._armSend(peerId, retryCount + 1, 0);
+          } else {
+            console.log(`[WebRTC] Connection failed after max retries, falling back to relay for ${peerId}`);
+            this._clearSendTimer(peerId);
+            this._flushQueueToRelay(peerId);
+          }
+        }
+      } else if (pc.connectionState === 'closed') {
         this.connections.delete(peerId);
         this.channels.delete(peerId);
       }
@@ -228,6 +243,9 @@ export class WebRTCManager {
 
   /** Wait for data channel — do NOT tear down while ICE is still negotiating. */
   _armSend(peerId, retryCount = 0, negotiateWaits = 0) {
+    if (!this._retryCounts) this._retryCounts = new Map();
+    this._retryCounts.set(peerId, retryCount);
+
     const ch = this.channels.get(peerId);
     if (ch?.readyState === 'open') {
       this._clearSendTimer(peerId);
