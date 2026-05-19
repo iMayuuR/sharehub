@@ -671,13 +671,11 @@ export class WebRTCManager {
     }
 
     let offset = 0;
-    let prefetchBuf = null;
-    let prefetchOffset = 0;
     const reader = new FileReader();
-    const prefetchReader = new FileReader();
 
-    const readNextInto = (targetReader, at) => {
-      targetReader.readAsArrayBuffer(file.slice(at, Math.min(at + CHUNK_SIZE, file.size)));
+    const readNext = () => {
+      const slice = file.slice(offset, Math.min(offset + CHUNK_SIZE, file.size));
+      reader.readAsArrayBuffer(slice);
     };
 
     const waitThenSend = (buf) => {
@@ -725,15 +723,7 @@ export class WebRTCManager {
         return;
       }
 
-      if (prefetchBuf) {
-        const tmp = prefetchBuf;
-        prefetchBuf = null;
-        readNextInto(prefetchReader, prefetchOffset);
-        prefetchOffset += CHUNK_SIZE;
-        sendChunk(tmp);
-      } else {
-        readNextInto(reader, offset);
-      }
+      readNext();
     };
 
     const onReadError = (err) => {
@@ -743,14 +733,10 @@ export class WebRTCManager {
       if (this.onSendFailed) this.onSendFailed(peerId, fileName, 'Could not read file');
     };
 
-    prefetchReader.onload = (e) => { prefetchBuf = e.target.result; };
-    prefetchReader.onerror = onReadError;
     reader.onload = (e) => sendChunk(e.target.result);
     reader.onerror = onReadError;
 
-    prefetchOffset = CHUNK_SIZE;
-    readNextInto(reader, 0);
-    if (file.size > CHUNK_SIZE) readNextInto(prefetchReader, prefetchOffset);
+    readNext();
   }
 
   arrayBufferToBase64(buffer) {
