@@ -9,6 +9,8 @@ const LAN_BUFFER_THRESHOLD_MAX = 16 * 1024 * 1024;
 // 256KB relay chunks (base64 overhead is ~33%, keep smaller)
 const RELAY_CHUNK_SIZE = 256 * 1024;
 const SEND_ACK_FALLBACK_MS = 15000;
+// Backstop for moving to the next queued file if the channel never drains.
+const QUEUE_DRAIN_TIMEOUT_MS = 10000;
 
 // Extension recovery for files missing extensions (Android gallery)
 const MIME_TO_EXT = {
@@ -667,18 +669,28 @@ export class WebRTCManager {
     this._ackFallbackTimers.set(ackKey, fallback);
 
     const channel = this.channels.get(peerId);
+    let advanced = false;
     const startNext = () => {
+      if (advanced) return;
+      advanced = true;
       const left = queue?.length || 0;
       if (left > 0) console.log(`[WebRTC] Pipelining next file (${left} in queue) to ${peerId}`);
       else this._batchTotals.delete(peerId);
       this._processQueue(peerId);
     };
 
-    if (channel?.readyState === 'open' && channel.bufferedAmount > 0) {
+    // bufferedamountlow only fires when the buffer *crosses down* through the
+    // threshold. Waiting on it while already below the mark means waiting for
+    // an event that will never come, and the rest of the queue never moves —
+    // so only wait when there is genuinely something to drain, and keep a
+    // timer behind it in case a congested channel never drains at all.
+    const lowMark = channel?.bufferedAmountLowThreshold ?? 0;
+    if (channel?.readyState === 'open' && channel.bufferedAmount > lowMark) {
       channel.onbufferedamountlow = () => {
         channel.onbufferedamountlow = null;
         startNext();
       };
+      setTimeout(startNext, QUEUE_DRAIN_TIMEOUT_MS);
     } else {
       startNext();
     }
