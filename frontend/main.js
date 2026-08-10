@@ -3,11 +3,15 @@ import { getIdentity, saveIdentity, generateIdentity } from './identity.js';
 import { UIManager } from './ui.js';
 import { SignalingClient } from './signaling.js';
 import { WebRTCManager } from './webrtc.js';
+import { OpticalUI } from './optical/ui.js';
+import { ModeSwitch, LIGHTWAVE } from './mode-switch.js';
 
 let identity = getIdentity();
 let signalingClient;
 let webrtcManager;
 let uiManager;
+let opticalUI;
+let modeSwitch;
 
 window.myIdentityId = identity.id;
 
@@ -29,6 +33,25 @@ function init() {
   });
 
   uiManager.setIdentity(identity);
+
+  // Lightwave runs entirely offline — it never touches signalling or WebRTC.
+  opticalUI = new OpticalUI({ onToast: (message) => uiManager.showToast(message) });
+
+  modeSwitch = new ModeSwitch({
+    onChange: (mode, reason) => {
+      if (reason === 'offline') {
+        uiManager.showToast('📴 No network — switched to Lightwave');
+      }
+    },
+    onNetworkChange: (online) => {
+      opticalUI.refreshNote();
+      if (online) {
+        uiManager.showToast('🌐 Back online — Radar is live again');
+        signalingClient?.connect();
+      }
+    },
+  });
+  window.shareHubBeam = (files) => opticalUI.beamFiles(files);
 
   uiManager.saveProfileBtn.addEventListener('click', () => {
     identity.name = uiManager.editNameInput.value || identity.name;
@@ -234,7 +257,11 @@ function init() {
   // Register PWA Service Worker
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      // Do not swallow this: a broken worker means no offline app, and
+      // Lightwave's whole point is working when nothing else does.
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.warn('[PWA] Service worker registration failed — offline support is off:', err);
+      });
     });
   }
 

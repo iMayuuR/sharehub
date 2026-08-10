@@ -60,14 +60,38 @@
       </header>
 
       <main class="main-content">
-        <section class="discovery-section">
-          <h2 class="section-title" style="letter-spacing: -0.5px; font-weight: 800; display: flex; align-items: center;">ShareHub Radar <span style="display:inline-block; margin-left:10px; width:10px; height:10px; border-radius:50%; background:#ffffff; box-shadow: 0 0 8px rgba(255,255,255,0.6); animation: pulse-dot 2s infinite;"></span></h2>
+        <!-- Mode switch — Radar needs a network, Lightwave needs none -->
+        <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="Transfer mode">
+          <button class="mode-tab active" id="modeTabRadar" data-mode="radar" role="tab" aria-selected="true">
+            <span class="mode-tab-icon">📡</span>
+            <span class="mode-tab-text">
+              <span class="mode-tab-label">Radar</span>
+              <span class="mode-tab-sub">Wi-Fi &amp; room code</span>
+            </span>
+          </button>
+          <button class="mode-tab" id="modeTabLightwave" data-mode="lightwave" role="tab" aria-selected="false">
+            <span class="mode-tab-icon">🔦</span>
+            <span class="mode-tab-text">
+              <span class="mode-tab-label">Lightwave</span>
+              <span class="mode-tab-sub">No network at all</span>
+            </span>
+          </button>
+        </div>
+
+        <div class="offline-banner" id="offlineBanner">
+          <span class="offline-banner-dot"></span>
+          <span id="offlineBannerText">You are offline — Lightwave still works.</span>
+        </div>
+
+        <!-- Radar — peers over the network -->
+        <section class="discovery-section mode-panel active" id="radarPanel" role="tabpanel" aria-labelledby="modeTabRadar">
+          <h2 class="section-title">ShareHub Radar <span class="section-title-dot"></span></h2>
           <p class="section-subtitle">Devices on your network appear automatically. Use a Room Code to connect across any network.</p>
-          
-          <div style="margin-bottom: var(--spacing-md);">
-            <button id="mainReceiveBtn" class="btn btn-outline" style="border-color: rgba(255,255,255,0.2); width: 100%; border-style: dashed;"><span style="margin-right: 8px;">🔗</span> Pair with Room Code</button>
+
+          <div class="section-actions">
+            <button id="mainReceiveBtn" class="btn btn-outline btn-dashed"><span aria-hidden="true">🔗</span> Pair with Room Code</button>
           </div>
-          
+
           <div id="peersContainer" class="peers-grid">
             <!-- Peer cards will be injected here -->
             <div class="peer-card empty-state" id="emptyState">
@@ -79,6 +103,27 @@
               <p>Searching for nearby ShareHub devices on your Wi-Fi...</p>
             </div>
           </div>
+        </section>
+
+        <!-- Lightwave — screen to camera, nothing in between -->
+        <section class="discovery-section mode-panel" id="lightwavePanel" role="tabpanel" aria-labelledby="modeTabLightwave">
+          <h2 class="section-title">ShareHub Lightwave <span class="section-title-dot"></span></h2>
+          <p class="section-subtitle">No Wi-Fi, no server, no pairing. One screen shows your files as moving light, the other camera drinks them in.</p>
+
+          <div class="optical-choices">
+            <button class="optical-choice" id="opticalBeamBtn">
+              <span class="optical-choice-icon">📤</span>
+              <span class="optical-choice-title">Beam</span>
+              <span class="optical-choice-sub">Show files as animated QR</span>
+            </button>
+            <button class="optical-choice" id="opticalCatchBtn">
+              <span class="optical-choice-icon">📷</span>
+              <span class="optical-choice-title">Catch</span>
+              <span class="optical-choice-sub">Point the camera at them</span>
+            </button>
+          </div>
+
+          <p class="optical-note" id="opticalNote">Slow but unstoppable — best for documents, photos and short clips.</p>
         </section>
       </main>
 
@@ -133,41 +178,99 @@
 
     <!-- Pair Modal — Room Code + QR -->
     <div class="modal-overlay" id="pairModal">
-      <div class="modal glass-panel">
-        <h3 style="text-align: center; margin-bottom: 4px;">Pair Devices</h3>
-        <p style="text-align: center; color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 20px;">Share the code below or scan the QR to connect instantly — works on any network.</p>
-        
+      <div class="modal glass-panel pair-modal">
+        <h3>Pair Devices</h3>
+        <p class="pair-lede">Share the code below or scan the QR to connect instantly — works on any network.</p>
+
         <!-- Your Room Code -->
-        <div style="text-align: center; margin-bottom: 20px;">
-          <p style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 8px;">Your Room Code</p>
-          <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
-            <span id="myRoomCode" style="font-size: 2rem; font-weight: 800; letter-spacing: 6px; color: #fff; font-family: monospace;">------</span>
-            <button id="copyRoomCodeBtn" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #fff; padding: 6px 10px; cursor: pointer; font-size: 0.8rem; transition: all 0.2s;" title="Copy code">📋</button>
+        <div class="pair-code-block">
+          <p class="pair-label">Your Room Code</p>
+          <div class="pair-code-row">
+            <span id="myRoomCode" class="pair-code">------</span>
+            <button id="copyRoomCodeBtn" class="pair-copy" title="Copy code">📋</button>
           </div>
         </div>
 
         <!-- QR Code -->
-        <div id="qrCodeContainer" style="text-align: center; margin: 0 auto 20px; width: fit-content; min-height: 180px; display: flex; align-items: center; justify-content: center;">
-          <span style="color: var(--text-secondary);">Generating...</span>
+        <div id="qrCodeContainer" class="pair-qr">
+          <span class="pair-qr-placeholder">Generating...</span>
         </div>
 
         <!-- Divider -->
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-          <div style="flex: 1; height: 1px; background: rgba(255,255,255,0.1);"></div>
-          <span style="color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px;">or join a room</span>
-          <div style="flex: 1; height: 1px; background: rgba(255,255,255,0.1);"></div>
-        </div>
+        <div class="pair-divider"><span>or join a room</span></div>
 
         <!-- Join Room Input -->
-        <div style="display: flex; gap: 8px; margin-bottom: 20px;">
-          <input type="text" id="joinRoomInput" placeholder="Enter code" maxlength="6" style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 12px 16px; color: #fff; font-size: 1.1rem; font-family: monospace; letter-spacing: 4px; text-align: center; text-transform: uppercase; outline: none;" />
-          <button id="joinRoomBtn" class="btn btn-primary" style="padding: 12px 20px; white-space: nowrap;">Join</button>
+        <div class="pair-join">
+          <input type="text" id="joinRoomInput" placeholder="Enter code" maxlength="6" />
+          <button id="joinRoomBtn" class="btn btn-primary">Join</button>
         </div>
 
         <div class="modal-actions">
-          <button id="closePairBtn" class="btn btn-text" style="width: 100%;">Close</button>
+          <button id="closePairBtn" class="btn btn-text">Close</button>
         </div>
       </div>
+    </div>
+
+    <input type="file" id="opticalFileInput" multiple style="display: none;" />
+
+    <!-- Optical Transfer — fullscreen stage -->
+    <div class="optical-stage" id="opticalStage">
+      <header class="optical-bar">
+        <div class="optical-heading">
+          <span class="optical-heading-title" id="opticalStageTitle">Beaming</span>
+          <span class="optical-heading-sub" id="opticalStageSub">Preparing…</span>
+        </div>
+        <button class="optical-exit" id="opticalExitBtn" title="Stop">&times;</button>
+      </header>
+
+      <!-- Beam (send) -->
+      <section class="optical-view" id="opticalBeamView">
+        <div class="optical-code-card">
+          <canvas id="opticalCanvas"></canvas>
+        </div>
+
+        <div class="optical-readout">
+          <div class="optical-stat"><span class="optical-stat-value" id="beamPass">0%</span><span class="optical-stat-label">Pass</span></div>
+          <div class="optical-stat"><span class="optical-stat-value" id="beamFrames">0</span><span class="optical-stat-label">Frames</span></div>
+          <div class="optical-stat"><span class="optical-stat-value" id="beamRate">0</span><span class="optical-stat-label">FPS</span></div>
+          <div class="optical-stat"><span class="optical-stat-value" id="beamLoop">—</span><span class="optical-stat-label">Loop</span></div>
+        </div>
+
+        <div class="optical-controls">
+          <div class="optical-control">
+            <label for="beamFpsInput">Speed <span id="beamFpsValue">12 fps</span></label>
+            <input type="range" id="beamFpsInput" min="4" max="24" step="1" value="12" />
+          </div>
+          <div class="optical-control">
+            <label>Density</label>
+            <div class="optical-segment" id="beamDensity"></div>
+          </div>
+        </div>
+
+        <p class="optical-hint">Keep this screen still and let the other device film it. The stream loops forever — it does not matter where the camera joins in.</p>
+      </section>
+
+      <!-- Catch (receive) -->
+      <section class="optical-view" id="opticalCatchView">
+        <div class="optical-camera">
+          <video id="opticalVideo" playsinline muted autoplay></video>
+          <div class="optical-aim"></div>
+        </div>
+
+        <div class="optical-progress">
+          <div class="optical-progress-bar"><div class="optical-progress-fill" id="catchFill"></div></div>
+          <span class="optical-progress-label" id="catchPercent">0%</span>
+        </div>
+
+        <div class="optical-readout">
+          <div class="optical-stat"><span class="optical-stat-value" id="catchBlocks">0 / 0</span><span class="optical-stat-label">Blocks</span></div>
+          <div class="optical-stat"><span class="optical-stat-value" id="catchSpeed">—</span><span class="optical-stat-label">Speed</span></div>
+          <div class="optical-stat"><span class="optical-stat-value" id="catchLeft">—</span><span class="optical-stat-label">Left</span></div>
+        </div>
+
+        <div class="optical-result" id="catchResult"></div>
+        <p class="optical-hint" id="catchHint">Fill the frame with the code and hold steady. Missed frames only cost time.</p>
+      </section>
     </div>
 
     <!-- PWA Install Floating Bubble -->

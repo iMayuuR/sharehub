@@ -1,9 +1,19 @@
 // sw.js — ShareHub Service Worker
-const CACHE_NAME = 'sharehub-v4';
+const CACHE_NAME = 'sharehub-v6';
 const ASSETS = [
   '/',
   '/manifest.json'
 ];
+
+// Asset filenames are content-hashed by the bundler, so they cannot be listed
+// here ahead of time — pre-caching guesses is what produced 404s in the past.
+// Instead every same-origin asset is copied into the cache as it is fetched, so
+// the second visit owns a complete offline copy of the app. That matters more
+// than it used to: Lightwave is meant to work with no network at all, and it
+// cannot if the page itself will not load.
+function isCacheableAsset(url) {
+  return url.origin === self.location.origin && /\.(js|css|svg|png|ico|woff2?)$/.test(url.pathname);
+}
 
 // Activate immediately
 self.addEventListener('install', (e) => {
@@ -121,20 +131,36 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Network-first for navigation (HTML pages), cache-first for assets
-  if (e.request.method === 'GET') {
-    if (e.request.mode === 'navigate') {
-      // Navigation: network first, fall back to cache
-      e.respondWith(
-        fetch(e.request).catch(() => caches.match('/index.html'))
-      );
-    } else {
-      // Assets: cache first
-      e.respondWith(
-        caches.match(e.request).then((response) => {
-          return response || fetch(e.request);
-        })
-      );
-    }
+  if (e.request.method !== 'GET') return;
+
+  // Navigation: network first so updates land immediately, cache as the
+  // safety net. '/' is what was pre-cached, so that is what we fall back to.
+  if (e.request.mode === 'navigate') {
+    e.respondWith((async () => {
+      try {
+        const fresh = await fetch(e.request);
+        const cache = await caches.open(CACHE_NAME);
+        cache.put('/', fresh.clone());
+        return fresh;
+      } catch {
+        return (await caches.match('/')) || (await caches.match(e.request)) || Response.error();
+      }
+    })());
+    return;
   }
+
+  if (!isCacheableAsset(url)) return;
+
+  // Hashed assets never change under the same name: serve from cache when we
+  // have them, and keep a copy of whatever we had to go to the network for.
+  e.respondWith((async () => {
+    const cached = await caches.match(e.request);
+    if (cached) return cached;
+    const response = await fetch(e.request);
+    if (response.ok && response.type === 'basic') {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(e.request, response.clone());
+    }
+    return response;
+  })());
 });

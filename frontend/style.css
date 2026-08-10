@@ -808,3 +808,631 @@ body {
   border-color: #ff3333;
   transform: scale(1.05);
 }
+
+/* ============================================================
+   Optical Transfer — screen-to-camera mode
+   ============================================================ */
+
+.optical-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-sm);
+}
+
+.optical-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--spacing-lg) var(--spacing-sm);
+  background: #0a0a0a;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--br-card);
+  color: #fff;
+  font-family: var(--font-family);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s;
+}
+
+.optical-choice:hover { background: #111111; border-color: #ffffff; }
+.optical-choice:active { transform: scale(0.97); }
+.optical-choice[disabled] { opacity: 0.4; cursor: not-allowed; }
+
+.optical-choice-icon { font-size: 1.8rem; line-height: 1; }
+.optical-choice-title { font-weight: 700; font-size: 1.05rem; letter-spacing: 0.5px; }
+.optical-choice-sub { font-size: 0.72rem; color: var(--text-secondary); line-height: 1.3; }
+
+.optical-note {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.5;
+  margin-top: calc(-1 * var(--spacing-sm));
+}
+
+/* --- Fullscreen stage --- */
+
+.optical-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: #000000;
+  display: none;
+  flex-direction: column;
+  padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  gap: var(--spacing-md);
+  overflow-y: auto;
+}
+
+.optical-stage.active { display: flex; }
+
+.optical-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  flex-shrink: 0;
+}
+
+.optical-heading { display: flex; flex-direction: column; min-width: 0; }
+
+.optical-heading-title {
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  font-size: 0.9rem;
+}
+
+.optical-heading-sub {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.optical-exit {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #111111;
+  border: 1px solid #333333;
+  color: #fff;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.optical-exit:hover { background: #222222; border-color: #ffffff; }
+
+.optical-view {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+  flex: 1;
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.optical-view.active { display: flex; }
+
+/* --- Beam --- */
+
+.optical-code-card {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 10px;
+  line-height: 0;
+  box-shadow: 0 0 60px rgba(255, 255, 255, 0.12);
+}
+
+#opticalCanvas {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* --- Catch --- */
+
+.optical-camera {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 52vh;
+  border-radius: var(--br-card);
+  overflow: hidden;
+  background: #050505;
+  border: 1px solid var(--glass-border);
+}
+
+.optical-camera video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.optical-aim {
+  position: absolute;
+  inset: 8%;
+  border-radius: 12px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.35);
+  outline: 2px dashed rgba(255, 255, 255, 0.5);
+  outline-offset: -2px;
+  pointer-events: none;
+}
+
+.optical-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  width: 100%;
+}
+
+.optical-progress-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: #161616;
+  overflow: hidden;
+}
+
+.optical-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #ffffff;
+  border-radius: 4px;
+  transition: width 0.2s ease-out;
+}
+
+.optical-progress-label {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.9rem;
+  min-width: 46px;
+  text-align: right;
+}
+
+/* --- Shared readout --- */
+
+.optical-readout {
+  display: flex;
+  width: 100%;
+  gap: var(--spacing-sm);
+}
+
+.optical-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 4px;
+  background: #0a0a0a;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--br-btn);
+}
+
+.optical-stat-value {
+  font-weight: 700;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.optical-stat-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+}
+
+.optical-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  width: 100%;
+}
+
+.optical-control { display: flex; flex-direction: column; gap: 6px; }
+
+.optical-control label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+}
+
+.optical-control input[type="range"] {
+  width: 100%;
+  accent-color: #ffffff;
+}
+
+.optical-segment {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 4px;
+  background: #0a0a0a;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--br-btn);
+}
+
+.optical-segment button {
+  padding: 8px 4px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.optical-segment button.active { background: #ffffff; color: #000000; }
+
+.optical-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.5;
+  max-width: 420px;
+}
+
+.optical-result {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  width: 100%;
+  padding: var(--spacing-md);
+  background: #0a0a0a;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--br-card);
+  text-align: center;
+}
+
+.optical-result.active { display: flex; }
+.optical-result .optical-result-title { font-weight: 700; }
+.optical-result .optical-result-sub { font-size: 0.78rem; color: var(--text-secondary); }
+.optical-result .btn { width: 100%; }
+.optical-result a.btn { display: block; text-align: center; text-decoration: none; }
+.optical-result.error { border-color: #552222; }
+
+@media (max-width: 480px) {
+  .optical-stat-value { font-size: 0.85rem; }
+  .optical-camera { max-height: 46vh; }
+}
+
+/* ============================================================
+   Mode switch — Radar (needs a network) vs Lightwave (needs none)
+   ============================================================ */
+
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 6px;
+  margin-bottom: var(--spacing-md);
+  background: var(--bg-panel);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--br-card);
+}
+
+.mode-tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: none;
+  border-radius: calc(var(--br-card) - 8px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.25s, color 0.25s;
+}
+
+.mode-tab:hover { background: var(--glass-highlight); color: #fff; }
+
+.mode-tab.active {
+  background: #ffffff;
+  color: #000000;
+}
+
+.mode-tab-icon { font-size: 1.15rem; line-height: 1; flex-shrink: 0; }
+
+.mode-tab-text { display: flex; flex-direction: column; min-width: 0; }
+
+.mode-tab-label {
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.mode-tab-sub {
+  font-size: 0.68rem;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mode-panel { display: none; }
+.mode-panel.active { display: block; animation: modeFade 0.25s ease-out; }
+
+@keyframes modeFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.offline-banner {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: var(--spacing-md);
+  border: 1px solid #3a3a1a;
+  background: #14140a;
+  border-radius: var(--br-btn);
+  color: #e8e2b0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.offline-banner.active { display: flex; }
+
+.offline-banner-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #e0c341;
+  box-shadow: 0 0 8px rgba(224, 195, 65, 0.6);
+  animation: pulse-dot 2s infinite;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  letter-spacing: -0.5px;
+  font-weight: 800;
+}
+
+.section-title-dot {
+  display: inline-block;
+  margin-left: 10px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
+  animation: pulse-dot 2s infinite;
+}
+
+.section-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.btn-dashed {
+  width: 100%;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Received file list */
+.optical-result-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.optical-result-files.single { display: none; }
+
+.optical-result-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--br-btn);
+  background: #050505;
+  color: #fff;
+  text-decoration: none;
+  font-size: 0.8rem;
+}
+
+.optical-result-file:hover { border-color: #ffffff; }
+
+.optical-result-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optical-result-file-size { color: var(--text-secondary); flex-shrink: 0; }
+
+/* The stage is fullscreen; nothing behind it should scroll. */
+body.stage-open { overflow: hidden; }
+
+/* ============================================================
+   Narrow phones — everything has to hold together down to 350px
+   ============================================================ */
+
+@media (max-width: 420px) {
+  .section-title { font-size: 1.5rem; }
+  .section-subtitle { font-size: 0.85rem; }
+
+  .optical-readout { gap: 6px; }
+  .optical-stat { padding: 8px 2px; }
+  .optical-stat-value { font-size: 0.8rem; }
+  .optical-stat-label { font-size: 0.55rem; letter-spacing: 0.5px; }
+
+  .optical-choice { padding: var(--spacing-md) 6px; }
+  .optical-choice-icon { font-size: 1.5rem; }
+  .optical-choice-title { font-size: 0.95rem; }
+  .optical-choice-sub { font-size: 0.66rem; }
+
+  .optical-stage { padding: max(10px, env(safe-area-inset-top)) 10px max(12px, env(safe-area-inset-bottom)); }
+  .optical-code-card { padding: 8px; }
+  .optical-segment button { font-size: 0.72rem; padding: 8px 2px; }
+}
+
+@media (max-width: 370px) {
+  .app-container { padding: var(--spacing-xs); }
+  .main-content { padding: var(--spacing-xs); }
+
+  /* Two tabs still fit; the descriptions are what has to go. */
+  .mode-tab { padding: 9px 8px; gap: 7px; }
+  .mode-tab-label { font-size: 0.88rem; }
+  .mode-tab-sub { display: none; }
+
+  .section-title { font-size: 1.35rem; }
+  .logo h1 { font-size: 1.1rem; }
+
+  .optical-heading-title { font-size: 0.8rem; letter-spacing: 1px; }
+  .optical-heading-sub { font-size: 0.7rem; }
+  .optical-exit { width: 36px; height: 36px; font-size: 1.2rem; }
+
+  .optical-stat-value { font-size: 0.75rem; }
+  .optical-stat-label { font-size: 0.5rem; }
+
+  .optical-hint, .optical-note { font-size: 0.7rem; }
+  .optical-result-file { font-size: 0.74rem; padding: 7px 10px; }
+  .toast { font-size: 0.8rem; }
+}
+
+/* ============================================================
+   Pair modal — was inline styles that could not be made to fit
+   a 350px screen; now it is real CSS that can shrink.
+   ============================================================ */
+
+.pair-modal { gap: var(--spacing-md); }
+.pair-modal h3 { text-align: center; margin-bottom: 0; }
+
+.pair-lede {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-top: calc(-1 * var(--spacing-sm));
+}
+
+.pair-code-block { text-align: center; }
+
+.pair-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-sm);
+}
+
+.pair-code-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.pair-code {
+  font-size: clamp(1.4rem, 8vw, 2rem);
+  font-weight: 800;
+  letter-spacing: clamp(2px, 1.5vw, 6px);
+  color: #fff;
+  font-family: monospace;
+  min-width: 0;
+}
+
+.pair-copy {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: #fff;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.pair-copy:hover { border-color: #fff; background: var(--glass-highlight); }
+
+.pair-qr {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  margin: 0 auto;
+  max-width: 100%;
+}
+
+.pair-qr img { max-width: 100%; height: auto; }
+.pair-qr-placeholder { color: var(--text-secondary); }
+
+.pair-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.pair-divider::before,
+.pair-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pair-join { display: flex; gap: var(--spacing-sm); }
+
+.pair-join input {
+  flex: 1;
+  min-width: 0; /* without this the input refuses to shrink and pushes Join off-screen */
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--br-btn);
+  padding: 12px;
+  color: #fff;
+  font-size: 1rem;
+  font-family: monospace;
+  letter-spacing: 3px;
+  text-align: center;
+  text-transform: uppercase;
+  outline: none;
+}
+
+.pair-join input:focus { border-color: #fff; }
+
+.pair-join .btn { padding: 12px 18px; white-space: nowrap; flex-shrink: 0; }
+
+.modal-actions .btn-text { width: 100%; }
+
+@media (max-width: 420px) {
+  .modal { padding: var(--spacing-lg) var(--spacing-md); }
+  .pair-lede { font-size: 0.78rem; }
+  .pair-join input { font-size: 0.9rem; letter-spacing: 2px; padding: 11px 8px; }
+  .pair-join .btn { padding: 11px 14px; }
+}
