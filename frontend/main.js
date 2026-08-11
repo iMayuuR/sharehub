@@ -5,6 +5,7 @@ import { SignalingClient } from './signaling.js';
 import { WebRTCManager } from './webrtc.js';
 import { OpticalUI } from './optical/ui.js';
 import { ModeSwitch, PHOTON } from './mode-switch.js';
+import { signalingOrigin } from './config.js';
 
 let identity = getIdentity();
 let signalingClient;
@@ -308,17 +309,10 @@ function init() {
     });
   }
 
-  // Keepalive ping — prevents Render free tier from sleeping (13 min interval)
-  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  const signalingUrl = import.meta.env.VITE_SIGNALING_URL
-    || (isLocal ? 'http://localhost:3002' : 'https://sharehub-signaling.onrender.com');
-  if (signalingUrl) {
-    const ping = () => fetch(`${signalingUrl}/health`).catch(() => {});
-    ping();
-    setInterval(ping, 13 * 60 * 1000);
-  } else {
-    console.warn('VITE_SIGNALING_URL not set, WebSocket connection may fail');
-  }
+  // Keepalive ping — prevents the Render free tier sleeping (13 min interval)
+  const ping = () => fetch(`${signalingOrigin()}/health`).catch(() => {});
+  ping();
+  setInterval(ping, 13 * 60 * 1000);
 
   // Mobile: reconnect WebSocket when app comes back to foreground
   document.addEventListener('visibilitychange', () => {

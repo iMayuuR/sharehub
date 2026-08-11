@@ -1,5 +1,7 @@
 // signaling.js - Enhanced logging for debugging
 
+import { signalingSocketBase } from './config.js';
+
 /** Failed connects before we stop pretending the radar is merely empty. */
 const UNREACHABLE_AFTER = 3;
 
@@ -103,21 +105,7 @@ export class SignalingClient {
       this._publicIp = await getPublicIp();
     }
 
-    let url;
-    const signalingBase = import.meta.env.VITE_SIGNALING_URL;
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-
-    let wsBase;
-    if (signalingBase) {
-      wsBase = signalingBase.replace(/^http/, 'ws');
-    } else if (isLocal) {
-      wsBase = `ws://${window.location.hostname}:3002`;
-    } else {
-      // Vercel/static host has no WS on :3002 — use Render signaling service
-      wsBase = 'wss://sharehub-signaling.onrender.com';
-    }
-
-    url = `${wsBase}?peerId=${this.peerId}&publicIp=${encodeURIComponent(this._publicIp)}`;
+    let url = `${signalingSocketBase()}?peerId=${this.peerId}&publicIp=${encodeURIComponent(this._publicIp)}`;
 
     if (this._roomId) url += `&roomId=${encodeURIComponent(this._roomId)}`;
 
