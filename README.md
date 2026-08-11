@@ -83,9 +83,24 @@ sharehub/
 
 2. **Signaling** — When a user selects a peer and initiates a file transfer, the frontend creates an `RTCPeerConnection` and exchanges SDP offers/answers and ICE candidates through the WebSocket server.
 
-3. **Data Transfer** — Once the WebRTC data channel opens, the sender slices the file into 64 KB chunks and streams them sequentially. The receiver reassembles the chunks and triggers a download when complete.
+3. **Data Transfer** — Once the WebRTC data channel opens, the sender slices the file into chunks and streams them sequentially. Chunk size is not a constant: SCTP negotiates a maximum message size per connection and refuses anything larger, so the sender reads `RTCPeerConnection.sctp.maxMessageSize` and cuts to fit. The receiver reassembles the chunks and triggers a download when complete.
+
+   Several files queue on the same channel and pipeline back to back. Throughput feedback from the receiver adjusts how much the sender keeps in flight.
 
 4. **Relay Fallback** — If the WebRTC connection cannot be established (symmetric NAT, corporate firewall), the app falls back to relaying file data through the WebSocket server.
+
+### Discovery and its limits
+
+Peers are grouped into rooms by network address — both the address the server
+observes and the one the client reports, so a blocked public-IP lookup does not
+isolate a device on its own. A departure is held for a grace period before it is
+announced, because a phone backgrounding for a second closes its socket and used
+to disappear from everyone's radar until it reconnected.
+
+Automatic discovery cannot cross a VPN: two devices on the same Wi-Fi leave by
+different routes when one is tunnelled, and nothing visible to the server ties
+them together. The server spots the mismatch and the app says so rather than
+spinning — pair with a Room Code in that case, and both devices remember it.
 
 ## PhotonHub — transfer with no network
 

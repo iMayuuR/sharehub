@@ -1,8 +1,15 @@
 // webrtc.js - Enhanced logging for debugging
 import { fileKey, enqueueFile, dequeueIfHead, queueRemaining } from './transfer-queue.js';
 
-// 4MB chunks — balance throughput vs browser SCTP limits
-const CHUNK_SIZE = 4 * 1024 * 1024;
+// SCTP negotiates a maximum message size and refuses anything larger. Chrome
+// advertises 256 KB, Safari has historically advertised less, Firefox reports
+// no limit at all. Sending past it throws, and the old 4 MB chunk meant every
+// file over 256 KB died on the first chunk — silently, because the failure was
+// mistaken for back-pressure and waited on an event that never came.
+const CHUNK_SIZE = 256 * 1024;
+const MIN_CHUNK_SIZE = 16 * 1024;
+/** Headroom under the negotiated ceiling, for SCTP's own framing. */
+const CHUNK_HEADROOM = 4 * 1024;
 // MUST stay below browser SCTP buffer (~16MB). 64MB breaks bufferedamountlow → send hangs forever.
 const LAN_BUFFER_THRESHOLD = 4 * 1024 * 1024;
 const LAN_BUFFER_THRESHOLD_MAX = 16 * 1024 * 1024;
@@ -22,6 +29,18 @@ const MIME_TO_EXT = {
   'application/pdf': '.pdf', 'application/zip': '.zip',
   'text/plain': '.txt', 'text/csv': '.csv', 'application/json': '.json',
 };
+
+/**
+ * Megabits per second, which is what the flow controller's thresholds are in.
+ * This used to divide bytes by 1024² and call the result Mbps, so every link
+ * looked eight times slower than it was: a healthy 23 Mbps Wi-Fi transfer
+ * reported "2.9" and tripped the "slow mobile link" branch, which halved the
+ * in-flight window on every single file.
+ */
+function megabitsPerSecond(bytes, seconds) {
+  if (!seconds || seconds <= 0) return 0;
+  return Number(((bytes * 8) / seconds / 1e6).toFixed(2));
+}
 
 function ensureExtension(name, mimeType) {
   if (!name) name = 'shared_file';
@@ -47,6 +66,10 @@ export class WebRTCManager {
     this._pendingCandidates = new Map();
     this._relayWarningShown = new Set();
     this._connectionTimeouts = new Map();
+    // Created up front: the ack handler drains this on every transfer, direct
+    // or relayed, and a lazily-built map threw there on every single file.
+    this._relayQueues = new Map();
+    this._fileQueues = new Map();
     this.activeTransferCount = 0;
     this.wakeLock = null;
     this._pendingFiles = new Map(); // peerId → file currently being sent (for channel-close recovery)
@@ -84,6 +107,16 @@ export class WebRTCManager {
 
   // "Polite peer" pattern: The peer with the SMALLER ID is "polite"
   // and will yield when both sides send offers simultaneously (glare)
+  /**
+   * Largest message this particular peer will accept. Firefox reports Infinity,
+   * which is not a number we can chunk by, so fall back to the safe default.
+   */
+  _chunkSizeFor(peerId) {
+    const max = this.connections.get(peerId)?.sctp?.maxMessageSize;
+    if (!Number.isFinite(max) || max <= 0) return CHUNK_SIZE;
+    return Math.max(MIN_CHUNK_SIZE, Math.min(CHUNK_SIZE, max - CHUNK_HEADROOM));
+  }
+
   _isPolite(peerId) {
     return this.myPeerId < peerId;
   }
@@ -437,10 +470,10 @@ export class WebRTCManager {
           if (fl) {
             const elapsed = (Date.now() - fl.reportTime) / 1000;
             if (elapsed > 0) {
-              const mbps = (fileData.receivedSize / elapsed / 1024 / 1024).toFixed(2);
+              const mbps = megabitsPerSecond(fileData.receivedSize, elapsed);
               const ch = this.channels.get(peerId);
               if (ch && ch.readyState === 'open') {
-                ch.send(JSON.stringify({ type: 'done', filename: fileData.meta.name, avgMbps: parseFloat(mbps) }));
+                ch.send(JSON.stringify({ type: 'done', filename: fileData.meta.name, avgMbps: mbps }));
               }
             }
             this._flowState.delete(peerId);
@@ -554,10 +587,10 @@ export class WebRTCManager {
             fl.chunks++;
             const elapsed = Date.now() - fl.reportTime;
             if (elapsed >= 2000) { // Report every 2s
-              const mbps = (fl.bytes / (elapsed / 1000) / 1024 / 1024).toFixed(2);
+              const mbps = megabitsPerSecond(fl.bytes, elapsed / 1000);
               const ch = this.channels.get(peerId);
               if (ch && ch.readyState === 'open') {
-                ch.send(JSON.stringify({ type: 'flow', mbps: parseFloat(mbps), chunks: fl.chunks }));
+                ch.send(JSON.stringify({ type: 'flow', mbps, chunks: fl.chunks }));
               }
               fl.bytes = 0;
               fl.chunks = 0;
@@ -619,7 +652,6 @@ export class WebRTCManager {
   }
 
   _enqueueFile(peerId, file, deferProcess = false) {
-    if (!this._fileQueues) this._fileQueues = new Map();
     if (!this._fileQueues.has(peerId)) this._fileQueues.set(peerId, []);
     const queue = this._fileQueues.get(peerId);
     const { added } = enqueueFile(queue, file);
@@ -639,7 +671,6 @@ export class WebRTCManager {
   }
 
   _processQueue(peerId) {
-    if (!this._fileQueues) this._fileQueues = new Map();
     const queue = this._fileQueues.get(peerId);
     if (!queue || queue.length === 0) return;
 
@@ -712,7 +743,7 @@ export class WebRTCManager {
     }
     const queue = this._fileQueues?.get(peerId) || [];
     const batchTotal = this._batchTotals.get(peerId) || queue.length;
-    console.log(`[WebRTC] Direct send to ${peerId}: ${fileName} (${(file.size / 1024 / 1024).toFixed(1)} MB, queue=${queue.length})`);
+    console.log(`[WebRTC] Direct send to ${peerId}: ${fileName} (${(file.size / 1024 / 1024).toFixed(1)} MB, queue=${queue.length}, chunk=${(this._chunkSizeFor(peerId) / 1024).toFixed(0)}KB)`);
 
     const sendState = { cancelled: false, reader: null, filename: fileName };
     this.activeSends.set(peerId, sendState);
@@ -733,15 +764,31 @@ export class WebRTCManager {
     }
 
     let offset = 0;
+    const chunkSize = this._chunkSizeFor(peerId);
     const reader = new FileReader();
     sendState.reader = reader;
 
     const readNext = () => {
-      const slice = file.slice(offset, Math.min(offset + CHUNK_SIZE, file.size));
+      const slice = file.slice(offset, Math.min(offset + chunkSize, file.size));
       reader.readAsArrayBuffer(slice);
     };
 
+    let drainWaits = 0;
     const waitThenSend = (buf) => {
+      // bufferedamountlow only fires on a downward crossing. If the buffer is
+      // already under the mark there is nothing to cross, and waiting on it
+      // stalls the transfer forever.
+      if (channel.bufferedAmount <= (channel.bufferedAmountLowThreshold ?? 0)) {
+        if (++drainWaits > 50) {
+          this._sending.delete(peerId);
+          this.activeSends.delete(peerId);
+          if (this.onSendFailed) this.onSendFailed(peerId, fileName, 'Connection would not accept the data');
+          return;
+        }
+        setTimeout(() => sendChunk(buf), 20);
+        return;
+      }
+      drainWaits = 0;
       channel.onbufferedamountlow = () => {
         channel.onbufferedamountlow = null;
         sendChunk(buf);
@@ -764,7 +811,9 @@ export class WebRTCManager {
       try {
         channel.send(buf);
       } catch (err) {
-        if (err.name === 'OperationError') {
+        // Only back-pressure is worth retrying. A message the peer will never
+        // accept must fail loudly instead of waiting on a drain that cannot help.
+        if (err.name === 'OperationError' && buf.byteLength <= chunkSize) {
           waitThenSend(buf);
           return;
         }
@@ -873,7 +922,6 @@ export class WebRTCManager {
 
   sendFileRelay(peerId, file) {
     // Enqueue for relay too — prevents overwriting
-    if (!this._relayQueues) this._relayQueues = new Map();
     if (!this._relayQueues.has(peerId)) this._relayQueues.set(peerId, []);
     this._relayQueues.get(peerId).push(file);
     if (this._relayQueues.get(peerId).length === 1) {
@@ -882,7 +930,7 @@ export class WebRTCManager {
   }
 
   _processRelayQueue(peerId) {
-    const queue = this._relayQueues.get(peerId);
+    const queue = this._relayQueues?.get(peerId);
     if (!queue || queue.length === 0) return;
 
     const file = queue[0];

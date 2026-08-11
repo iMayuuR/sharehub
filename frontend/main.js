@@ -53,6 +53,18 @@ function init() {
   });
   window.shareHubBeam = (files) => opticalUI.beamFiles(files);
 
+  document.getElementById('shareTrayBeam')?.addEventListener('click', () => {
+    const pending = (window.pendingShareFiles || []).slice();
+    if (!pending.length) return hideShareTray();
+    window.pendingShareFiles = [];
+    hideShareTray();
+    opticalUI.beamFiles(pending);
+  });
+  document.getElementById('shareTrayDismiss')?.addEventListener('click', () => {
+    window.pendingShareFiles = [];
+    hideShareTray();
+  });
+
   uiManager.saveProfileBtn.addEventListener('click', () => {
     identity.name = uiManager.editNameInput.value || identity.name;
     saveIdentity(identity);
@@ -242,6 +254,18 @@ function init() {
     }
   };
 
+  // A VPN puts this device on a different public network from everyone in the
+  // room, so the radar will never find them. Say so, and point at the fix.
+  signalingClient.onRouting = (routedElsewhere) => {
+    const empty = document.getElementById('emptyState');
+    if (!routedElsewhere || !empty) return;
+    if (uiManager.peersContainer.querySelectorAll('.peer-card:not(.empty-state)').length) return;
+    const hint = empty.querySelector('.radar-vpn-hint') || document.createElement('p');
+    hint.className = 'radar-vpn-hint';
+    hint.textContent = 'Looks like a VPN or proxy is on. Nearby devices cannot be matched automatically — pair with a Room Code instead.';
+    if (!hint.parentNode) empty.appendChild(hint);
+  };
+
   signalingClient.onRoomJoined = (roomCode) => {
     // Clean up URL if it had ?room= param
     const url = new URL(window.location.href);
@@ -402,18 +426,14 @@ function checkPendingOSFiles() {
   // Handle case when SW wasn't installed yet (first-time gallery share)
   if (window.location.search.includes('shared=pending')) {
     window.history.replaceState({}, document.title, '/');
-    // SW is now installing, tell user to try again
-    setTimeout(() => {
-      const emptyState = document.getElementById('emptyState');
-      if (emptyState) {
-        emptyState.innerHTML = `
-          <div class="avatar" style="font-size:3rem; margin-bottom: 10px; background: transparent; box-shadow: none;">🔄</div>
-          <p style="font-weight: bold; color: var(--neon-cyan)">Almost there!</p>
-          <p style="font-size: 0.9rem;">ShareHub is now installed. Please share the file again from your gallery.</p>
-        `;
-        emptyState.style.display = 'flex';
-      }
-    }, 500);
+    // The service worker was not installed in time to catch the POST. It is
+    // now, so the next share will land — say so where the user can see it.
+    showShareTray({
+      icon: '🔄',
+      title: 'Almost there',
+      sub: 'ShareHub is ready now. Share those files again from your gallery and they will land here.',
+      canBeam: false,
+    });
     return;
   }
 
@@ -444,16 +464,34 @@ function checkPendingOSFiles() {
   });
 }
 
+/**
+ * Shows above the mode tabs, so it is there in both Radar and PhotonHub. The
+ * old version rewrote the radar's empty state, which meant a user on the
+ * PhotonHub tab saw nothing at all after sharing from their gallery — and the
+ * radar markup never came back.
+ */
+function showShareTray({ icon, title, sub, canBeam }) {
+  const tray = document.getElementById('shareTray');
+  if (!tray) return;
+  document.getElementById('shareTrayIcon').textContent = icon;
+  document.getElementById('shareTrayTitle').textContent = title;
+  document.getElementById('shareTraySub').textContent = sub;
+  document.getElementById('shareTrayBeam').style.display = canBeam ? '' : 'none';
+  tray.classList.add('active');
+}
+
+function hideShareTray() {
+  document.getElementById('shareTray')?.classList.remove('active');
+}
+
 function showPendingShareUI() {
-  const emptyState = document.getElementById('emptyState');
-  if(emptyState) {
-    emptyState.innerHTML = `
-      <div class="avatar" style="font-size:3rem; margin-bottom: 10px; background: transparent; box-shadow: none;">📦</div>
-      <p style="font-weight: bold; color: var(--neon-cyan)">${window.pendingShareFiles.length} file(s) ready to send!</p>
-      <p style="font-size: 0.9rem;">Tap 'Send' on any device to share.</p>
-    `;
-    emptyState.style.display = 'flex';
-  }
+  const count = window.pendingShareFiles.length;
+  showShareTray({
+    icon: '📦',
+    title: `${count} file${count === 1 ? '' : 's'} ready to send`,
+    sub: 'Pick a device on Radar, or beam them straight across with PhotonHub.',
+    canBeam: true,
+  });
 }
 
 window.addEventListener('DOMContentLoaded', () => {

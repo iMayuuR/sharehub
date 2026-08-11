@@ -86,36 +86,34 @@ export class OpticalSender {
     }
     if (total === 0) throw new Error(files.length > 1 ? 'Those files are empty' : 'File is empty');
 
-    let raw;
-    let bundled = false;
-    if (files.length === 1) {
-      raw = new Uint8Array(await files[0].arrayBuffer());
-    } else {
-      // One byte stream goes down the wire, so several files travel as a bundle.
-      const loaded = await Promise.all(
-        files.map(async (file) => ({
-          name: file.name || 'shared_file',
-          type: file.type || 'application/octet-stream',
-          bytes: new Uint8Array(await file.arrayBuffer()),
-        }))
-      );
-      raw = packBundle(loaded);
-      bundled = true;
-    }
+    // Always a bundle, even for one file: the manifest travels inside the
+    // payload, where a name can be any length. The meta frame has to fit in a
+    // single QR code, so a name carried there would have to be shortened — and
+    // a file must arrive called exactly what it left as.
+    const loaded = await Promise.all(
+      files.map(async (file) => ({
+        name: file.name || 'shared_file',
+        type: file.type || 'application/octet-stream',
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      }))
+    );
+    const raw = packBundle(loaded);
 
     const hash = await sha256Hex(raw);
     const { bytes, gzipped } = await maybeCompress(raw);
 
+    const many = files.length > 1;
     this.payload = bytes;
-    this.flags = (gzipped ? FLAG_GZIP : 0) | (bundled ? FLAG_BUNDLE : 0);
+    this.flags = (gzipped ? FLAG_GZIP : 0) | FLAG_BUNDLE;
     this.file = {
-      name: bundled ? `${files.length} files` : files[0].name || 'shared_file',
-      type: bundled ? 'application/x-sharehub-bundle' : files[0].type || 'application/octet-stream',
+      name: many ? `${files.length} files` : loaded[0].name,
+      type: many ? 'application/x-sharehub-bundle' : loaded[0].type,
       size: total,
       count: files.length,
     };
+    // Display only — the names that get saved come from the manifest.
     this.meta = { n: this.file.name, m: this.file.type, s: total, h: hash };
-    if (bundled) this.meta.c = files.length;
+    if (many) this.meta.c = files.length;
     this._rebuild();
 
     return { name: this.file.name, size: total, count: files.length, gzipped, packedSize: bytes.length };
@@ -201,7 +199,11 @@ export class OpticalSender {
     return slack > 0 ? build({ ...meta, p: 'A'.repeat(slack) }) : bytes;
   }
 
-  /** Keep the meta frame inside one QR by shortening an over-long filename. */
+  /**
+   * Keep the meta frame inside one QR by shortening the name it shows. This is
+   * the progress label only; the saved filename comes from the bundle manifest
+   * and is never touched.
+   */
   _fitMeta() {
     const budget = this.density.bytes - HEADER_SIZE;
     const encoder = new TextEncoder();

@@ -91,6 +91,20 @@
           </button>
         </div>
 
+        <!-- Files handed over by the OS share sheet. Lives above the tabs so it
+             is visible whichever transfer mode the user is on. -->
+        <div class="share-tray" id="shareTray">
+          <span class="share-tray-icon" id="shareTrayIcon">📦</span>
+          <span class="share-tray-text">
+            <strong id="shareTrayTitle">2 files ready to send</strong>
+            <span id="shareTraySub">Pick a device on Radar, or beam them with PhotonHub.</span>
+          </span>
+          <span class="share-tray-actions">
+            <button class="btn btn-primary share-tray-btn" id="shareTrayBeam">Beam</button>
+            <button class="share-tray-dismiss" id="shareTrayDismiss" title="Dismiss">&times;</button>
+          </span>
+        </div>
+
         <div class="offline-banner" id="offlineBanner">
           <span class="offline-banner-dot"></span>
           <span id="offlineBannerText">You are offline — Lightwave still works.</span>

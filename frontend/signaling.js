@@ -1,13 +1,36 @@
 // signaling.js - Enhanced logging for debugging
 
-// Cache public IP for 1 hour to avoid repeated fetches
-let _cachedPublicIp = null;
-let _cacheTimestamp = 0;
+// Cache public IP for 1 hour to avoid repeated fetches.
+// Persisted, not just held in memory: a reload used to re-ask, and a different
+// provider answering with a different address moved the device into a different
+// room — which reads as the device vanishing from everyone else's radar.
+const IP_CACHE_KEY = 'sharehub_public_ip';
 const CACHE_DURATION_MS = 3600000; // 1 hour
 
+function readCachedIp() {
+  try {
+    const raw = localStorage.getItem(IP_CACHE_KEY);
+    if (!raw) return null;
+    const { ip, at } = JSON.parse(raw);
+    return ip && Date.now() - at < CACHE_DURATION_MS ? ip : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedIp(ip) {
+  try {
+    localStorage.setItem(IP_CACHE_KEY, JSON.stringify({ ip, at: Date.now() }));
+  } catch {
+    /* private mode — in-memory for this session is fine */
+  }
+}
+
+let _cachedPublicIp = null;
+
 async function getPublicIp() {
-  // Return cached IP if still valid
-  if (_cachedPublicIp && (Date.now() - _cacheTimestamp) < CACHE_DURATION_MS) {
+  _cachedPublicIp = _cachedPublicIp || readCachedIp();
+  if (_cachedPublicIp) {
     console.log(`[Signaling] Using cached public IP: ${_cachedPublicIp}`);
     return _cachedPublicIp;
   }
@@ -29,7 +52,7 @@ async function getPublicIp() {
       const ip = data.ip || data.IP || data.origin;
       if (ip) {
         _cachedPublicIp = ip;
-        _cacheTimestamp = Date.now();
+        writeCachedIp(ip);
         console.log(`[Signaling] Public IP fetched: ${ip}`);
         return ip;
       }
@@ -52,6 +75,8 @@ export class SignalingClient {
     this.onRelay = onRelay;
     this.onRoomJoined = null;
     this.onConnectionChange = null;
+    this.onRouting = null;
+    this.routedElsewhere = false;
     this.ws = null;
     this._roomId = null;
     this._reconnectTimer = null;
@@ -123,6 +148,11 @@ export class SignalingClient {
         switch (data.type) {
           case 'connected':
             console.log('[Signaling] Received connected message');
+            // The server sees this device arriving from a different address
+            // than it reports for itself: a VPN or proxy sits in between, so
+            // nobody on the same Wi-Fi will ever be grouped with it.
+            this.routedElsewhere = Boolean(data.routedElsewhere);
+            if (this.onRouting) this.onRouting(this.routedElsewhere);
             break;
           case 'peers-list':
             console.log(`[Signaling] Received peers list: ${data.peers.length} peers`);

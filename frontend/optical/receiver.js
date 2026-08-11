@@ -291,6 +291,8 @@ export class OpticalReceiver {
       // Verify the payload as it travelled, before any unbundling.
       const verified = meta.h ? (await sha256Hex(bytes)) === meta.h : null;
 
+      // Names come from the manifest, never from the meta frame, which may have
+      // had to shorten them to fit inside a QR code.
       const unpacked = this.flags & FLAG_BUNDLE ? unpackBundle(bytes) : null;
       const files = unpacked
         ? unpacked.map((file) => ({

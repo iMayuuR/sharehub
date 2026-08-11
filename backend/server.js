@@ -30,11 +30,30 @@ app.get('/health', (req, res) => {
 // Store connected peers
 const peers = new Map();
 
+// A phone that backgrounds for a moment, or a Wi-Fi blip, closes the socket and
+// reopens it seconds later. Announcing that as a departure made devices vanish
+// from everyone's radar and pop back — so hold the news for a grace period and
+// say nothing at all if they come straight back.
+const PEER_GRACE_MS = 8000;
+const pendingDepartures = new Map();
+
+function cancelDeparture(peerId) {
+  const timer = pendingDepartures.get(peerId);
+  if (!timer) return false;
+  clearTimeout(timer);
+  pendingDepartures.delete(peerId);
+  return true;
+}
+
 function getClientIp(req) {
   let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
   if (ip.includes(',')) ip = ip.split(',')[0].trim();
   if (ip.startsWith('::ffff:')) ip = ip.replace('::ffff:', '');
   return ip;
+}
+
+function send(ws, payload) {
+  if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
 function intersects(setA, setB) {
@@ -72,8 +91,18 @@ wss.on('connection', (ws, req) => {
     networkIp = clientPublicIp;
   }
 
-  // Group by Network IP
+  // Both the address we observe and the one the client reports. A client whose
+  // public-IP lookup was blocked, or answered by a different provider, still
+  // shares the server-observed room with everyone behind the same NAT.
   rooms.add(`ip-${networkIp}`);
+  if (serverIp && serverIp !== 'unknown') rooms.add(`ip-${serverIp}`);
+
+  // Differing addresses mean this device leaves the network by another route —
+  // a VPN or a proxy — so automatic discovery cannot match it up. The client
+  // uses this to point the user at a Room Code instead of waiting forever.
+  const routedElsewhere = Boolean(
+    clientPublicIp && clientPublicIp !== 'unknown' && serverIp !== 'unknown' && clientPublicIp !== serverIp
+  );
 
   // Debug: Server seeing peer in these network rooms
   // console.log(`[Discovery] Peer ${peerId} grouped in:`, Array.from(rooms));
@@ -84,12 +113,24 @@ wss.on('connection', (ws, req) => {
   // 4. Explicit roomId
   if (explicitRoomId) rooms.add(explicitRoomId.toUpperCase().trim());
 
+  // Same device reconnecting: drop the stale socket and keep the departure quiet.
+  const returning = cancelDeparture(peerId);
+  const previous = peers.get(peerId);
+  if (previous && previous.ws !== ws) {
+    try { previous.ws.close(4000, 'Replaced by a newer connection'); } catch {}
+  }
+
   peers.set(peerId, { ws, rooms, peerId });
 
   console.log(`[+] ${peerId.substring(0, 8)} connected | serverIP: ${serverIp} | clientIP: ${clientPublicIp} | networkIP: ${networkIp} | rooms: ${Array.from(rooms).filter(r => r !== peerId).join(', ')}`);
 
   // Send connection confirmation with rooms (so frontend can log)
-  ws.send(JSON.stringify({ type: 'connected', peerId, rooms: Array.from(rooms).filter(r => r !== peerId) }));
+  ws.send(JSON.stringify({
+    type: 'connected',
+    peerId,
+    rooms: Array.from(rooms).filter(r => r !== peerId),
+    routedElsewhere,
+  }));
 
   // Send existing peers that share any room
   const peersInRoom = Array.from(peers.values())
@@ -98,12 +139,14 @@ wss.on('connection', (ws, req) => {
 
   ws.send(JSON.stringify({ type: 'peers-list', peers: peersInRoom }));
 
-  // Broadcast new peer to others in shared rooms
-  peers.forEach(p => {
-    if (p.peerId !== peerId && intersects(p.rooms, rooms)) {
-      p.ws.send(JSON.stringify({ type: 'peer-joined', peerId }));
-    }
-  });
+  // A device that never left does not need announcing again.
+  if (!returning) {
+    peers.forEach(p => {
+      if (p.peerId !== peerId && intersects(p.rooms, rooms)) {
+        send(p.ws, { type: 'peer-joined', peerId });
+      }
+    });
+  }
 
   ws.on('message', (message) => {
     try {
@@ -115,8 +158,8 @@ wss.on('connection', (ws, req) => {
 
         peers.forEach(p => {
           if (p.peerId !== peerId && p.rooms.has(roomCode)) {
-            ws.send(JSON.stringify({ type: 'peer-joined', peerId: p.peerId }));
-            p.ws.send(JSON.stringify({ type: 'peer-joined', peerId }));
+            send(ws, { type: 'peer-joined', peerId: p.peerId });
+            send(p.ws, { type: 'peer-joined', peerId });
           }
         });
 
@@ -144,16 +187,21 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    const disconnectedRooms = peers.get(peerId)?.rooms || new Set();
-    peers.delete(peerId);
-    console.log(`[-] ${peerId.substring(0, 8)} disconnected`);
+    // Only the socket that is still the current one for this peer counts.
+    if (peers.get(peerId)?.ws !== ws) return;
 
-    // Immediately broadcast to all peers in shared rooms
-    peers.forEach(p => {
-      if (intersects(p.rooms, disconnectedRooms)) {
-        p.ws.send(JSON.stringify({ type: 'peer-left', peerId }));
-      }
-    });
+    const departedRooms = peers.get(peerId)?.rooms || new Set();
+    peers.delete(peerId);
+    console.log(`[-] ${peerId.substring(0, 8)} dropped, holding ${PEER_GRACE_MS}ms`);
+
+    pendingDepartures.set(peerId, setTimeout(() => {
+      pendingDepartures.delete(peerId);
+      if (peers.has(peerId)) return; // came back on another socket
+      console.log(`[-] ${peerId.substring(0, 8)} gone`);
+      peers.forEach(p => {
+        if (intersects(p.rooms, departedRooms)) send(p.ws, { type: 'peer-left', peerId });
+      });
+    }, PEER_GRACE_MS));
   });
 
   // Prevent Render timeout

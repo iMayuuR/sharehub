@@ -250,17 +250,9 @@ export class UIManager {
         if (this.onPeerClick) {
           this.onPeerClick(peerId, pending.length === 1 ? pending[0] : pending);
         }
-        this.emptyState.innerHTML = `
-          <div class="radar-animation">
-            <div class="radar-dot" style="top: 20%; left: 60%; animation-delay: 0.5s;"></div>
-            <div class="radar-dot" style="top: 70%; left: 30%; animation-delay: 1.2s;"></div>
-            <div class="radar-dot" style="top: 40%; left: 20%; animation-delay: 0.8s;"></div>
-          </div>
-          <p>Searching for nearby ShareHub devices on your Wi-Fi...</p>
-        `;
-        if (this.peersContainer.querySelectorAll('.peer-card:not(.empty-state)').length > 0) {
-          this.emptyState.style.display = 'none';
-        }
+        // The share tray owns this message now, so the radar's own empty state
+        // is left exactly as the markup declared it.
+        document.getElementById('shareTray')?.classList.remove('active');
         return;
       }
 

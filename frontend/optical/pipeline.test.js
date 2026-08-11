@@ -247,6 +247,43 @@ describe('optical pipeline', () => {
     assert.equal(widths.size, 1, `canvas resized mid-stream: ${[...widths].join(', ')}px`);
   });
 
+  it('never renames a file, however long its name', async () => {
+    const { OpticalSender } = await import('./sender.js');
+    const { OpticalReceiver } = await import('./receiver.js');
+
+    // Longer than a meta frame could ever carry, plus characters that survive
+    // no encoding by accident.
+    const name = `${'quarterly-report-final-FINAL-v2-'.repeat(6)}संलग्न (1).pdf`;
+    const original = new Uint8Array(4000).map((_, i) => (i * 29) & 0xff);
+
+    const canvas = new FakeCanvas();
+    const sender = new OpticalSender(canvas);
+    sender.setDensity('normal');
+    sender.setTargetSize(420);
+    await sender.load(new File([original], name, { type: 'application/pdf' }));
+
+    const receiver = new OpticalReceiver({ srcObject: null, setAttribute() {}, play() {} });
+    let finished = null;
+    receiver.onComplete = (result) => {
+      finished = result;
+    };
+
+    pendingFrames = [];
+    sender.start();
+    pump(sender, canvas, (surface) => {
+      const scanned = surface.scan();
+      if (scanned) receiver._ingest(scanned.data);
+    }, sender.blockCount * 2 + 30);
+    sender.stop();
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(finished, 'receiver never completed');
+    assert.equal(finished.files.length, 1);
+    assert.equal(finished.files[0].name, name, 'filename was altered in transit');
+    assert.equal(finished.verified, true);
+    assert.deepEqual(new Uint8Array(await finished.files[0].blob.arrayBuffer()), original);
+  });
+
   it('recovers when the sender changes density mid-beam', async () => {
     const { OpticalSender } = await import('./sender.js');
     const { OpticalReceiver } = await import('./receiver.js');
