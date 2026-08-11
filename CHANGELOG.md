@@ -31,7 +31,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Responsive Down to 350px** — Every screen, including the fullscreen Beam and Catch stages, is verified free of horizontal overflow from 350px upward.
 - **Service Worker Failures Are Visible** — Registration errors were swallowed silently, which hid a broken worker behind "offline just does not work". `public/sw.js` is also copied to the build without ever being parsed by the bundler, so `npm test` now parses and exercises it.
-- **Service Worker v6** — Cache bumped so the new assets and caching strategy are picked up on update.
+- **Service Worker v6** — Cache bumped so the new assets and caching strategy are picked up on update. Install reads the shell for its content-hashed asset URLs, and those bundles for the chunks they load in turn, so the very first visit owns a complete offline copy instead of waiting for a second one.
 
 ---
 
