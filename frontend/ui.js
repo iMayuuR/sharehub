@@ -1,4 +1,11 @@
 // ui.js
+import { identityForPeer } from './identity.js';
+
+
+/** How long a finished sheet lingers before it tidies itself away. */
+const AUTO_DISMISS_MS = 4000;
+/** Beyond this the stack stops being a notification and becomes a wall. */
+const MAX_TOASTS = 3;
 
 function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -42,6 +49,8 @@ export class UIManager {
 
     this.onPeerClick = onPeerClick;
     this.onJoinRoom = null;
+    this.sheetPinned = false;
+    this._autoDismissTimer = null;
     this.activeTransfers = new Map(); // key: transferId, value: { peerId, filename, direction, progress, totalSize, item }
     this.roomCode = generateRoomCode();
     this.selectedPeerId = null;
@@ -125,12 +134,7 @@ export class UIManager {
       });
     }
 
-    const handleSheet = document.querySelector('.sheet-handle');
-    let startY = 0;
-    handleSheet.addEventListener('touchstart', e => { startY = e.touches[0].clientY; });
-    handleSheet.addEventListener('touchmove', e => {
-       if (e.touches[0].clientY - startY > 50) this.hideTransferSheet();
-    });
+    this.setupSheetGestures();
 
     if (this.clearTransfersBtn) {
       this.clearTransfersBtn.addEventListener('click', () => {
@@ -149,6 +153,75 @@ export class UIManager {
     }
   }
 
+  /**
+   * The sheet used to listen for touch only, so on a desktop there was no way
+   * to get it out of the way at all, and it sat over the peer cards. Pointer
+   * events cover mouse and touch alike: tap the grip to collapse to a bar,
+   * drag it down to dismiss.
+   */
+  setupSheetGestures() {
+    const handle = document.getElementById('sheetHandle');
+    const close = document.getElementById('sheetCloseBtn');
+    if (!handle) return;
+
+    close?.addEventListener('click', () => this.hideTransferSheet());
+
+    let startY = 0;
+    let dragged = false;
+
+    handle.addEventListener('pointerdown', (event) => {
+      startY = event.clientY;
+      dragged = false;
+      handle.setPointerCapture(event.pointerId);
+      this.transferSheet.classList.add('dragging');
+    });
+
+    handle.addEventListener('pointermove', (event) => {
+      if (!handle.hasPointerCapture(event.pointerId)) return;
+      const moved = event.clientY - startY;
+      if (Math.abs(moved) > 6) dragged = true;
+      if (moved > 90) {
+        handle.releasePointerCapture(event.pointerId);
+        this.transferSheet.classList.remove('dragging');
+        this.hideTransferSheet();
+      } else if (moved > 30) {
+        this.collapseTransferSheet(true);
+      } else if (moved < -30) {
+        this.collapseTransferSheet(false);
+      }
+    });
+
+    const finish = (event) => {
+      if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+      this.transferSheet.classList.remove('dragging');
+      // A tap, not a drag, toggles.
+      if (!dragged) this.collapseTransferSheet(!this.transferSheet.classList.contains('collapsed'));
+    };
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
+  }
+
+  /** Collapse to a bar rather than hiding, so progress stays glanceable. */
+  collapseTransferSheet(collapsed) {
+    this.sheetPinned = true;
+    this.transferSheet.classList.toggle('collapsed', collapsed);
+    const footer = document.getElementById('appFooter');
+    if (footer) footer.style.paddingBottom = collapsed ? '90px' : '260px';
+  }
+
+  /** Everything finished: get out of the way, unless the user has taken charge. */
+  _scheduleAutoDismiss() {
+    clearTimeout(this._autoDismissTimer);
+    const transfers = [...this.activeTransfers.values()];
+    if (!transfers.length || transfers.some((t) => t.progress < 100)) return;
+
+    this._autoDismissTimer = setTimeout(() => {
+      if (this.sheetPinned) return;
+      const stillDone = [...this.activeTransfers.values()].every((t) => t.progress >= 100);
+      if (stillDone) this.hideTransferSheet();
+    }, AUTO_DISMISS_MS);
+  }
+
   // --- Toast Notification ---
   showToast(message, duration = 3000) {
     let container = document.getElementById('toast-container');
@@ -158,6 +231,21 @@ export class UIManager {
       document.body.appendChild(container);
     }
 
+    // Saying the same thing twice is never worth two toasts.
+    const existing = [...container.children].find((el) => el.textContent === message);
+    if (existing) {
+      clearTimeout(existing._timer);
+      existing._timer = setTimeout(() => {
+        existing.classList.remove('show');
+        setTimeout(() => existing.remove(), 300);
+      }, duration);
+      return;
+    }
+
+    // A batch of files used to raise a toast per file per stage and bury the
+    // screen. The sheet is where the detail belongs; keep the stack shallow.
+    while (container.children.length >= MAX_TOASTS) container.firstElementChild.remove();
+
     const toast = document.createElement('div');
     toast.className = 'toast';
     toast.textContent = message;
@@ -166,7 +254,7 @@ export class UIManager {
     // Trigger animation
     requestAnimationFrame(() => toast.classList.add('show'));
 
-    setTimeout(() => {
+    toast._timer = setTimeout(() => {
       toast.classList.remove('show');
       setTimeout(() => toast.remove(), 300);
     }, duration);
@@ -191,7 +279,10 @@ export class UIManager {
     this.editAvatarPreview.textContent = identity.avatar;
   }
 
-  addPeer(peerId, name = 'Unknown Device', avatar = '💻') {
+  addPeer(peerId, name, avatar) {
+    const fallback = identityForPeer(peerId);
+    name = name || fallback.name;
+    avatar = avatar || fallback.avatar;
     const existingCard = document.getElementById(`peer-${peerId}`);
     if (existingCard) {
       existingCard.querySelector('.avatar').textContent = avatar;
@@ -290,6 +381,8 @@ export class UIManager {
 
   // --- Transfer Management ---
   showTransferSheet() {
+    clearTimeout(this._autoDismissTimer);
+    this.transferSheet.classList.remove('collapsed');
     this.transferSheet.classList.add('open');
     // Push footer above the sheet
     const footer = document.getElementById('appFooter');
@@ -300,7 +393,9 @@ export class UIManager {
   }
 
   hideTransferSheet() {
-    this.transferSheet.classList.remove('open');
+    clearTimeout(this._autoDismissTimer);
+    this.sheetPinned = false;
+    this.transferSheet.classList.remove('open', 'collapsed');
     const footer = document.getElementById('appFooter');
     if (footer) footer.style.paddingBottom = '30px';
   }
@@ -375,6 +470,8 @@ export class UIManager {
 
     // Update the UI for this transfer
     this.updateTransferItemUI(item, peerId, direction, filename, progress, totalSize);
+    transferData.progress = progress;
+    this._scheduleAutoDismiss();
   }
 
   /**
@@ -530,16 +627,8 @@ export class UIManager {
       this.updateProgress(peerId, filename, 100, transferData.totalSize, direction);
     }
 
-    // Show toast notification
-    const peerName = peerId.substring(0, 8) + '...'; // Fallback if metadata not available
-    // TODO: Get actual peer name from metadata if available
-
-    if (direction === 'send') {
-      this.showToast(`✅ "${filename}" sent!`);
-    } else {
-      this.showToast(`📥 "${filename}" received!`);
-    }
-
+    // No toast here: main.js announces completion with the peer's name, and
+    // raising a second one meant every file arrived twice on screen.
     if (direction === 'receive') {
       this.setPeerStatus(peerId, 'Ready to receive');
     }

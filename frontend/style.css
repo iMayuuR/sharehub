@@ -25,6 +25,8 @@
   --font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   
   --vh: 100vh;
+  /* How much of the sheet stays on screen when collapsed. */
+  --sheet-peek: 62px;
 }
 
 * {
@@ -398,16 +400,58 @@ body {
   pointer-events: auto;
 }
 
-.sheet-content {
+/* The shell is the fixed frame; only .sheet-body scrolls inside it, so the
+   title and its buttons never scroll away and the page behind never takes the
+   scroll instead. */
+.sheet-shell {
+  display: flex;
+  flex-direction: column;
+  max-height: min(70dvh, 560px);
   border-radius: var(--br-card) var(--br-card) 0 0;
-  padding: var(--spacing-md) var(--spacing-lg);
-  padding-bottom: calc(var(--spacing-xl) + env(safe-area-inset-bottom, 16px));
   border-bottom: none;
-  min-height: 200px;
-  max-height: 60vh;
-  overflow-y: auto;
+  padding: var(--spacing-sm) 0 0;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+  padding: 0 var(--spacing-lg) var(--spacing-sm);
+}
+
+.sheet-header h3 { margin-bottom: 0; font-size: 1.05rem; }
+.sheet-header-actions { display: flex; align-items: center; gap: 4px; }
+.sheet-header-actions .btn-text { padding: var(--spacing-xs) var(--spacing-sm); display: none; }
+
+.sheet-close {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.sheet-close:hover { color: #fff; border-color: #fff; }
+
+.sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Keep the page behind from taking over once this hits its end. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 var(--spacing-lg);
+  padding-bottom: calc(var(--spacing-lg) + env(safe-area-inset-bottom, 12px));
 }
 .sheet-content h3 {
   margin-top: 0;
@@ -420,14 +464,25 @@ body {
 }
 
 .sheet-handle {
+  display: block;
   width: 60px;
   height: 8px;
+  padding: 0;
   background: rgba(255, 255, 255, 0.3);
+  border: none;
   border-radius: 10px;
   margin: 0 auto var(--spacing-sm);
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
   transition: background 0.2s;
 }
+
+.bottom-sheet.collapsed {
+  transform: translate(-50%, calc(100% - var(--sheet-peek)));
+  pointer-events: auto;
+}
+
+.bottom-sheet.dragging .sheet-shell { transition: none; }
 .sheet-handle:hover { background: rgba(255, 255, 255, 0.5); }
 
 /* --- Modals --- */
@@ -717,7 +772,8 @@ body {
 /* --- Toast Notifications --- */
 #toast-container {
   position: fixed;
-  top: 20px;
+  /* Below the header rather than over it, and out of the way of the sheet. */
+  top: 84px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 9999;

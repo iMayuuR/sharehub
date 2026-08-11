@@ -1,5 +1,5 @@
 // main.js
-import { getIdentity, saveIdentity, generateIdentity } from './identity.js';
+import { getIdentity, saveIdentity, generateIdentity, identityForPeer } from './identity.js';
 import { UIManager } from './ui.js';
 import { SignalingClient } from './signaling.js';
 import { WebRTCManager } from './webrtc.js';
@@ -128,8 +128,11 @@ function init() {
       // Add any peers we don't have metadata for yet (to show them in UI)
       peersList.forEach(pId => {
         if (pId !== identity.id && !peerMetadata.has(pId)) {
-          // We don't know their name/avatar yet, add with placeholders
-          uiManager.addPeer(pId, 'Unknown Device', '💻');
+          // Not "Unknown Device": a name derived from the peer id, so it is
+          // stable, friendly, and the same on both screens until their own
+          // announcement arrives — or if it never does.
+          const placeholder = identityForPeer(pId);
+          uiManager.addPeer(pId, placeholder.name, placeholder.avatar);
           // Pre-connect to enable fast file transfer once they announce
           webrtcManager.preConnect(pId);
         }
@@ -175,14 +178,14 @@ function init() {
       const peerName = peerMetadata.get(peerId)?.name || 'Device';
       const q = webrtcManager.getQueueStatus(peerId);
       if (direction === 'send') {
-        uiManager.showToast(`✅ "${filename}" sent to ${peerName}!`);
+        if (q.pending === 0) uiManager.showToast(`✅ Sent to ${peerName}`);
         if (q.pending > 0) {
           uiManager.setPeerStatus(peerId, `Sending… ${q.pending} file(s) remaining`);
         } else {
           uiManager.setPeerStatus(peerId, 'Ready to receive');
         }
       } else {
-        uiManager.showToast(`📥 "${filename}" received from ${peerName}!`);
+        uiManager.showToast(`📥 Received from ${peerName}: "${filename}"`);
         uiManager.setPeerStatus(peerId, 'Ready to receive');
       }
       // Notify WebRTC manager about transfer completion for wake lock management
@@ -214,8 +217,7 @@ function init() {
         uiManager.showToast(`⬆ Sending "${filename}" to ${peerName}…`);
       }
     } else {
-      uiManager.setPeerStatus(peerId, `Receiving "${filename}"...`);
-      uiManager.showToast(`⬇ Receiving "${filename}" from ${peerName}...`);
+      uiManager.setPeerStatus(peerId, `Receiving "${filename}"…`);
     }
     // Notify WebRTC manager about transfer start for wake lock management
     if (webrtcManager._incrementActiveTransfers) {

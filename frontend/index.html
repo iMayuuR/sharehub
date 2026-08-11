@@ -198,18 +198,23 @@
 
     <!-- Bottom Sheet / Modal for Active Transfers and Actions -->
     <div class="bottom-sheet" id="transferSheet">
-      <div class="sheet-handle"></div>
-      <div class="sheet-content glass-panel" id="transferContent">
-        <!-- Transfer progress will go here -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--spacing-sm);">
-          <h3 id="transferTitle" style="margin-bottom: 0;">Ready to Transfer</h3>
-          <button id="clearTransfersBtn" class="btn btn-text" style="padding: var(--spacing-xs); display: none;">Clear</button>
+      <div class="sheet-shell glass-panel">
+        <!-- Header stays put; only the list below it scrolls. -->
+        <button class="sheet-handle" id="sheetHandle" aria-label="Collapse transfers"></button>
+        <div class="sheet-header">
+          <h3 id="transferTitle">Ready to Transfer</h3>
+          <div class="sheet-header-actions">
+            <button id="clearTransfersBtn" class="btn btn-text">Clear</button>
+            <button id="sheetCloseBtn" class="sheet-close" aria-label="Close transfers">&times;</button>
+          </div>
         </div>
-        <div class="transfer-status" id="transferStatus">No active transfers.</div>
-        
-        <!-- Hidden file input -->
-        <input type="file" id="fileInput" multiple style="display: none;" />
+        <div class="sheet-body" id="transferContent">
+          <div class="transfer-status" id="transferStatus">No active transfers.</div>
+        </div>
       </div>
+
+      <!-- Hidden file input -->
+      <input type="file" id="fileInput" multiple style="display: none;" />
     </div>
 
     <!-- Edit Profile Modal -->

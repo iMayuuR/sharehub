@@ -12,6 +12,24 @@ export function generateIdentity() {
   };
 }
 
+/**
+ * A stable, friendly name for a peer we have heard of but not yet heard from.
+ * Derived from the peer id, so both ends show the same thing, and it replaces
+ * the "Unknown Device" placeholder that used to sit there until the peer's own
+ * announcement arrived — or forever, if it never did.
+ */
+export function identityForPeer(peerId) {
+  let hash = 0;
+  for (let i = 0; i < peerId.length; i++) hash = (Math.imul(hash, 31) + peerId.charCodeAt(i)) | 0;
+  hash = Math.abs(hash);
+
+  const noun = NOUNS[hash % NOUNS.length];
+  return {
+    name: `${ADJECTIVES[(hash >> 5) % ADJECTIVES.length]} ${noun}`,
+    avatar: noun.split(' ')[1] || '😎',
+  };
+}
+
 export function getIdentity() {
   const stored = localStorage.getItem('sharehub-identity');
   if (stored) return JSON.parse(stored);
