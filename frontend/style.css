@@ -839,7 +839,21 @@ body {
 .optical-choice:active { transform: scale(0.97); }
 .optical-choice[disabled] { opacity: 0.4; cursor: not-allowed; }
 
-.optical-choice-icon { font-size: 1.8rem; line-height: 1; }
+.optical-choice-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  color: #fff;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.optical-choice-icon svg { width: 22px; height: 22px; }
+.optical-choice:hover .optical-choice-icon { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.35); }
 .optical-choice-title { font-weight: 700; font-size: 1.05rem; letter-spacing: 0.5px; }
 .optical-choice-sub { font-size: 0.72rem; color: var(--text-secondary); line-height: 1.3; }
 
@@ -847,8 +861,10 @@ body {
   font-size: 0.75rem;
   color: var(--text-secondary);
   text-align: center;
-  line-height: 1.5;
-  margin-top: calc(-1 * var(--spacing-sm));
+  line-height: 1.6;
+  /* Was a negative margin, which jammed it into the tiles above. */
+  margin: var(--spacing-md) auto 0;
+  max-width: 34ch;
 }
 
 /* --- Fullscreen stage --- */
@@ -861,8 +877,11 @@ body {
   display: none;
   flex-direction: column;
   padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
-  gap: var(--spacing-md);
-  overflow-y: auto;
+  gap: var(--spacing-sm);
+  /* Nothing here scrolls: scrolling on a phone collapses the URL bar, which
+     changes the viewport, which used to resize the code mid-transfer. The
+     controls stay on screen instead of hiding below the fold. */
+  overflow: hidden;
 }
 
 .optical-stage.active { display: flex; }
@@ -911,15 +930,33 @@ body {
 .optical-view {
   display: none;
   flex-direction: column;
-  align-items: center;
-  gap: var(--spacing-md);
+  align-items: stretch;
+  gap: var(--spacing-sm);
   flex: 1;
+  min-height: 0;
   width: 100%;
   max-width: 520px;
   margin: 0 auto;
 }
 
 .optical-view.active { display: flex; }
+
+/* Takes whatever height the panel below does not need. */
+.optical-code-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.optical-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
 
 /* --- Beam --- */
 
@@ -942,8 +979,9 @@ body {
 .optical-camera {
   position: relative;
   width: 100%;
+  max-width: 100%;
   aspect-ratio: 1 / 1;
-  max-height: 52vh;
+  max-height: 100%;
   border-radius: var(--br-card);
   overflow: hidden;
   background: #050505;
@@ -1118,38 +1156,61 @@ body {
 .mode-switch {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  padding: 6px;
+  gap: 4px;
+  padding: 4px;
   margin-bottom: var(--spacing-md);
-  background: var(--bg-panel);
+  background: linear-gradient(180deg, #0d0d0d, #070707);
   border: 1px solid var(--glass-border);
-  border-radius: var(--br-card);
+  border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .mode-tab {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 10px 12px;
-  border: none;
-  border-radius: calc(var(--br-card) - 8px);
+  padding: 11px 13px;
+  border: 1px solid transparent;
+  border-radius: 12px;
   background: transparent;
   color: var(--text-secondary);
   font-family: var(--font-family);
   text-align: left;
   cursor: pointer;
-  transition: background 0.25s, color 0.25s;
+  transition: background 0.22s ease, color 0.22s ease, border-color 0.22s ease, transform 0.22s ease;
 }
 
-.mode-tab:hover { background: var(--glass-highlight); color: #fff; }
+.mode-tab:hover {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+
+.mode-tab:active { transform: scale(0.985); }
 
 .mode-tab.active {
   background: #ffffff;
+  border-color: #ffffff;
   color: #000000;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
 }
 
-.mode-tab-icon { font-size: 1.15rem; line-height: 1; flex-shrink: 0; }
+.mode-tab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  transition: background 0.22s ease;
+}
+
+.mode-tab.active .mode-tab-icon { background: rgba(0, 0, 0, 0.08); }
+.mode-tab-icon svg { width: 18px; height: 18px; }
 
 .mode-tab-text { display: flex; flex-direction: column; min-width: 0; }
 
@@ -1161,8 +1222,8 @@ body {
 }
 
 .mode-tab-sub {
-  font-size: 0.68rem;
-  opacity: 0.7;
+  font-size: 0.67rem;
+  opacity: 0.65;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1435,4 +1496,58 @@ body.stage-open { overflow: hidden; }
   .pair-lede { font-size: 0.78rem; }
   .pair-join input { font-size: 0.9rem; letter-spacing: 2px; padding: 11px 8px; }
   .pair-join .btn { padding: 11px 14px; }
+}
+
+/* Install nudge — PhotonHub is only there offline if the app is already there */
+.offline-ready {
+  display: none;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+  padding: 12px 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--br-card);
+}
+
+.offline-ready.active { display: flex; }
+
+.offline-ready-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.offline-ready-icon svg { width: 18px; height: 18px; }
+
+.offline-ready-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.offline-ready-text strong { color: #fff; font-weight: 600; }
+
+.offline-ready-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 370px) {
+  .offline-ready { flex-wrap: wrap; }
+  .offline-ready-btn { width: 100%; }
+  .optical-choice-icon { width: 36px; height: 36px; }
+  .optical-choice-icon svg { width: 19px; height: 19px; }
+  .mode-tab { padding: 9px 9px; gap: 8px; }
+  .mode-tab-icon { width: 26px; height: 26px; }
+  .mode-tab-icon svg { width: 16px; height: 16px; }
 }

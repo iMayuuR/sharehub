@@ -4,7 +4,7 @@ import { UIManager } from './ui.js';
 import { SignalingClient } from './signaling.js';
 import { WebRTCManager } from './webrtc.js';
 import { OpticalUI } from './optical/ui.js';
-import { ModeSwitch, LIGHTWAVE } from './mode-switch.js';
+import { ModeSwitch, PHOTON } from './mode-switch.js';
 
 let identity = getIdentity();
 let signalingClient;
@@ -34,13 +34,13 @@ function init() {
 
   uiManager.setIdentity(identity);
 
-  // Lightwave runs entirely offline — it never touches signalling or WebRTC.
+  // PhotonHub runs entirely offline — it never touches signalling or WebRTC.
   opticalUI = new OpticalUI({ onToast: (message) => uiManager.showToast(message) });
 
   modeSwitch = new ModeSwitch({
     onChange: (mode, reason) => {
       if (reason === 'offline') {
-        uiManager.showToast('📴 No network — switched to Lightwave');
+        uiManager.showToast('📴 No network — switched to PhotonHub');
       }
     },
     onNetworkChange: (online) => {
@@ -258,7 +258,7 @@ function init() {
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       // Do not swallow this: a broken worker means no offline app, and
-      // Lightwave's whole point is working when nothing else does.
+      // PhotonHub's whole point is working when nothing else does.
       navigator.serviceWorker.register('/sw.js').catch((err) => {
         console.warn('[PWA] Service worker registration failed — offline support is off:', err);
       });
@@ -333,6 +333,34 @@ function init() {
     }
   });
 
+  // PhotonHub only exists offline if the app is already on the device, so the
+  // panel carries its own install prompt rather than relying on the bubble.
+  const offlineReady = document.getElementById('offlineReady');
+  const offlineReadyBtn = document.getElementById('offlineReadyBtn');
+  const alreadyInstalled = () =>
+    window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+
+  const refreshInstallNudge = () => {
+    if (offlineReady) offlineReady.classList.toggle('active', !alreadyInstalled());
+  };
+  refreshInstallNudge();
+
+  if (offlineReadyBtn) {
+    offlineReadyBtn.addEventListener('click', async () => {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        refreshInstallNudge();
+        return;
+      }
+      const isIos = /ipad|iphone|ipod/.test(navigator.userAgent.toLowerCase()) && !window.MSStream;
+      uiManager.showToast(
+        isIos ? 'Tap Share ➔ Add to Home Screen' : 'Use your browser menu ➔ Install app'
+      );
+    });
+  }
+
   const installBubble = document.getElementById('pwaInstallBubble');
   const dismissBtn = document.getElementById('pwaDismissBubble');
 
@@ -363,8 +391,8 @@ function init() {
 
   window.addEventListener('appinstalled', () => {
     if (installBubble) installBubble.style.display = 'none';
+    if (offlineReady) offlineReady.classList.remove('active');
     deferredPrompt = null;
-
   });
 }
 

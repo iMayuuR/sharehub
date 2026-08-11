@@ -10,9 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Lightwave** — Move files between two devices with no network at all. One screen shows them as an endless stream of animated QR codes, the other films it and rebuilds them. Two modes: **Beam** (send) and **Catch** (receive).
-- **Radar / Lightwave Tabs** — The home screen now switches between the networked path and the optical one. Losing the network moves the app to Lightwave by itself; tapping a tab pins the choice for the session, so nobody gets dragged between screens mid-task. An offline banner explains what happened.
-- **Multi-File Lightwave** — Pick several files and they travel as one bundled stream: a manifest plus the file bodies, fountain-coded together and unpacked back into separate downloads at the far end. The manifest rides inside the payload, because a meta frame has to fit in a single QR code.
+- **PhotonHub** — Move files between two devices with no network at all. One screen shows them as an endless stream of animated QR codes, the other films it and rebuilds them. Two modes: **Beam** (send) and **Catch** (receive).
+- **Radar / Photon Tabs** — The home screen now switches between the networked path and the optical one. Losing the network moves the app to PhotonHub by itself; tapping a tab pins the choice for the session, so nobody gets dragged between screens mid-task. An offline banner explains what happened.
+- **Multi-File PhotonHub** — Pick several files and they travel as one bundled stream: a manifest plus the file bodies, fountain-coded together and unpacked back into separate downloads at the far end. The manifest rides inside the payload, because a meta frame has to fit in a single QR code.
 - **Fountain-Coded Frames** — The sender never stops and never waits for an acknowledgement, because a screen-to-camera link has no back-channel. Frames are Luby-transform symbols over the payload's blocks, so the receiver can join at any moment, in any order, and dropped frames cost time instead of correctness. The first pass is systematic, so catching the start of a stream finishes in exactly one pass.
 - **Base45 Frames in QR Alphanumeric Mode** — Costs ~3% of payload capacity and makes every frame survive a string-only decoder, which is what lets the native `BarcodeDetector` fast path work at all. jsQR runs in a Web Worker wherever `BarcodeDetector` is missing (Safari, Firefox).
 - **Metadata and Verification** — Filename, media type and a SHA-256 of the payload ride in their own frame type, mixed into the stream at most every 16th frame and more often for short files. Payloads are gzipped only when that actually shrinks them, and the hash is checked before any download is offered.
@@ -24,11 +24,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **Multi-File Send Stalled After the First File** — Queued files after the first never left the sender. On finishing a file the queue waited for `bufferedamountlow`, but that event only fires when the buffer *crosses down* through the threshold; a buffer already below the mark meant waiting for an event that would never arrive. Sending three files delivered exactly one. The queue now advances immediately when there is nothing to drain, with a timer behind it for a congested channel.
+- **PhotonHub Panel Text Collided With the Tiles** — The note under Beam/Catch was pulled up by a negative margin and sat on top of them.
 - **Pair Modal Overflowed Narrow Screens** — The room-code input refused to shrink and pushed the Join button off the right edge below ~370px. Its inline styles are now real CSS that can shrink.
 - **QR Version 23 at Low ECC** — Codes at this one version/level pair are written with a block layout readers do not agree on, and nothing could read them back. Frames that would land there now step up a version.
 
 ### Improved
 
+- **The Beamed Code No Longer Twitches** — Its size came from `window.innerHeight`, which on a phone changes by ~60px every time the URL bar slides in or out. Scrolling down to reach the controls was itself what made the code jump between two sizes. The stage no longer scrolls at all: the code takes whatever height the controls do not need, measured from its own container, and small changes are ignored outright.
+- **Beam and Catch Controls Stay On Screen** — They used to sit below the fold on a short screen, which is exactly where a hand holding a phone cannot reach them.
+- **Modern Mode Tabs** — Drawn icons instead of emoji, with a proper active state.
 - **Responsive Down to 350px** — Every screen, including the fullscreen Beam and Catch stages, is verified free of horizontal overflow from 350px upward.
 - **Service Worker Failures Are Visible** — Registration errors were swallowed silently, which hid a broken worker behind "offline just does not work". `public/sw.js` is also copied to the build without ever being parsed by the bundler, so `npm test` now parses and exercises it.
 - **Service Worker v6** — Cache bumped so the new assets and caching strategy are picked up on update. Install reads the shell for its content-hashed asset URLs, and those bundles for the chunks they load in turn, so the very first visit owns a complete offline copy instead of waiting for a second one.

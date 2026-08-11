@@ -1,6 +1,6 @@
-// mode-switch.js — Radar (needs a network) vs Lightwave (needs none).
+// mode-switch.js — Radar (needs a network) vs PhotonHub (needs none).
 //
-// The point of Lightwave is that it works when nothing else does, so the app
+// The point of PhotonHub is that it works when nothing else does, so the app
 // should land there by itself the moment the network goes away instead of
 // leaving the user staring at a radar that will never find anything. A manual
 // tap pins the choice for the rest of the session — being moved between tabs
@@ -9,7 +9,7 @@
 const MODE_KEY = 'shareHubMode';
 
 export const RADAR = 'radar';
-export const LIGHTWAVE = 'lightwave';
+export const PHOTON = 'photon';
 
 export class ModeSwitch {
   /**
@@ -22,7 +22,7 @@ export class ModeSwitch {
     this.tabs = [...document.querySelectorAll('.mode-tab')];
     this.panels = {
       [RADAR]: document.getElementById('radarPanel'),
-      [LIGHTWAVE]: document.getElementById('lightwavePanel'),
+      [PHOTON]: document.getElementById('photonPanel'),
     };
     this.banner = document.getElementById('offlineBanner');
     this.bannerText = document.getElementById('offlineBannerText');
@@ -42,7 +42,7 @@ export class ModeSwitch {
 
     const remembered = localStorage.getItem(MODE_KEY);
     const startOffline = navigator.onLine === false;
-    this.set(startOffline ? LIGHTWAVE : remembered === LIGHTWAVE ? LIGHTWAVE : RADAR, startOffline ? 'offline' : 'restore');
+    this.set(startOffline ? PHOTON : remembered === PHOTON ? PHOTON : RADAR, startOffline ? 'offline' : 'restore');
     this._renderBanner(navigator.onLine !== false);
   }
 
@@ -51,7 +51,7 @@ export class ModeSwitch {
    * @param {'user'|'offline'|'restore'|'auto'} reason
    */
   set(mode, reason = 'auto') {
-    const next = mode === LIGHTWAVE ? LIGHTWAVE : RADAR;
+    const next = mode === PHOTON ? PHOTON : RADAR;
     if (next === this.mode) return;
     this.mode = next;
 
@@ -77,14 +77,14 @@ export class ModeSwitch {
     this._renderBanner(online);
     this.onNetworkChange(online);
     // Only ever pull the user somewhere they cannot already be stuck.
-    if (!online && !this.pinned) this.set(LIGHTWAVE, 'offline');
+    if (!online && !this.pinned) this.set(PHOTON, 'offline');
   }
 
   _renderBanner(online) {
     if (!this.banner) return;
     this.banner.classList.toggle('active', !online);
     if (this.bannerText) {
-      this.bannerText.textContent = 'No network — Lightwave still works, it only needs a screen and a camera.';
+      this.bannerText.textContent = 'No network — PhotonHub still works, it only needs a screen and a camera.';
     }
   }
 }

@@ -81,7 +81,7 @@ export class OpticalSender {
     const total = files.reduce((sum, file) => sum + file.size, 0);
     if (total > MAX_FILE_BYTES) {
       throw new Error(
-        `${files.length > 1 ? 'These files are' : 'File is'} too large for Lightwave (max ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB)`
+        `${files.length > 1 ? 'These files are' : 'File is'} too large for PhotonHub (max ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB)`
       );
     }
     if (total === 0) throw new Error(files.length > 1 ? 'Those files are empty' : 'File is empty');

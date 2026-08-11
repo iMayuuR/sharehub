@@ -1,4 +1,4 @@
-// receiver.js — camera side of optical transfer ("Catch").
+// receiver.js — camera side of PhotonHub ("Catch").
 //
 // Grabs the centre square of the camera feed, decodes whatever QR is in it, and
 // feeds every frame it recognises to the fountain decoder. Frames arrive out of
@@ -300,7 +300,7 @@ export class OpticalReceiver {
           }))
         : [
             {
-              name: meta.n || `lightwave-${this.session}.bin`,
+              name: meta.n || `photon-${this.session}.bin`,
               size: bytes.length,
               blob: new Blob([bytes], { type: meta.m || 'application/octet-stream' }),
             },

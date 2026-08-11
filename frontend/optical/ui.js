@@ -1,4 +1,4 @@
-// ui.js — the Beam / Catch screens of Lightwave.
+// ui.js — the Beam / Catch screens of PhotonHub.
 //
 // Everything below is wiring: the codec lives in fountain.js and protocol.js,
 // the two engines in sender.js and receiver.js. This file owns the DOM, the
@@ -12,6 +12,11 @@ import { createWakeLock } from './wake-lock.js';
 
 const FPS_KEY = 'opticalFps';
 const DENSITY_KEY = 'opticalDensity';
+
+/** White card padding around the code, plus a little breathing room. */
+const CODE_CARD_PADDING = 28;
+/** Ignore smaller changes than this, so the code never twitches. */
+const CODE_RESIZE_THRESHOLD = 12;
 
 export class OpticalUI {
   /**
@@ -31,6 +36,7 @@ export class OpticalUI {
     this.exitBtn = document.getElementById('opticalExitBtn');
 
     this.beamView = document.getElementById('opticalBeamView');
+    this.codeWrap = document.getElementById('beamCodeWrap');
     this.canvas = document.getElementById('opticalCanvas');
     this.beamPass = document.getElementById('beamPass');
     this.beamFrames = document.getElementById('beamFrames');
@@ -58,7 +64,7 @@ export class OpticalUI {
     this.fps = clampFps(Number(localStorage.getItem(FPS_KEY)) || 12);
     this.densityId = localStorage.getItem(DENSITY_KEY) || DEFAULT_DENSITY;
 
-    this._onResize = this._onResize.bind(this);
+    this.codeSize = 0;
     this._setup();
   }
 
@@ -102,7 +108,13 @@ export class OpticalUI {
       }
     });
 
-    window.addEventListener('resize', this._onResize);
+    // Watch the box the code lives in, not the window. On a phone the URL bar
+    // slides in and out and changes window.innerHeight by ~60px, which used to
+    // resize the code mid-transfer and made it flicker between two sizes.
+    if (typeof ResizeObserver !== 'undefined' && this.codeWrap) {
+      this.codeObserver = new ResizeObserver(() => this._layoutBeam());
+      this.codeObserver.observe(this.codeWrap);
+    }
     this.refreshNote();
   }
 
@@ -149,13 +161,14 @@ export class OpticalUI {
   async _startBeam(files) {
     const total = files.reduce((sum, file) => sum + file.size, 0);
     if (total > MAX_FILE_BYTES) {
-      this.onToast(`⚠️ Too large for Lightwave — max ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB`);
+      this.onToast(`⚠️ Too large for PhotonHub — max ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB`);
       return;
     }
 
     // Beaming again without exiting first would leave the old animation loop
     // running and both senders painting the same canvas.
     this.sender?.stop();
+    this.codeSize = 0;
     this._openStage('beam', 'Beaming', 'Preparing…');
 
     this.sender = new OpticalSender(this.canvas);
@@ -168,7 +181,7 @@ export class OpticalUI {
       this._layoutBeam();
       this.sender.start();
       this._updateBeamSubtitle(loaded);
-      if (loaded.count > 1) this.onToast(`🔦 Beaming ${loaded.count} files as one stream`);
+      if (loaded.count > 1) this.onToast(`Beaming ${loaded.count} files as one stream`);
     } catch (err) {
       this.onToast(`⚠️ ${err.message}`);
       this._closeStage();
@@ -190,16 +203,20 @@ export class OpticalUI {
     this.beamRate.textContent = stats.actualFps.toFixed(1);
   }
 
-  /** Give the code as much of the viewport as the surrounding chrome allows. */
+  /**
+   * Size the code from the space actually left over, and only when that space
+   * really moved — a couple of stray pixels must never redraw at a new size.
+   */
   _layoutBeam() {
-    if (!this.sender) return;
-    const width = Math.min(this.stage.clientWidth - 52, 520);
-    const height = window.innerHeight - 300;
-    this.sender.setTargetSize(Math.max(160, Math.min(width, height)));
-  }
+    if (!this.sender || !this.codeWrap) return;
+    const box = this.codeWrap.getBoundingClientRect();
+    if (!box.width || !box.height) return;
 
-  _onResize() {
-    if (this.sender && this.stage.classList.contains('active')) this._layoutBeam();
+    const size = Math.max(150, Math.floor(Math.min(box.width, box.height) - CODE_CARD_PADDING));
+    if (Math.abs(size - this.codeSize) < CODE_RESIZE_THRESHOLD) return;
+
+    this.codeSize = size;
+    this.sender.setTargetSize(size);
   }
 
   // --- Catch -----------------------------------------------------------

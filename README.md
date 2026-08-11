@@ -29,8 +29,8 @@ Drop a file on one device, receive it on another. That is the entire workflow.
 - **No File Size Limits** — Since transfers are peer-to-peer, there is no server-side storage constraint. Send whatever fits on the receiving device.
 - **Progressive Web App** — Install ShareHub to your home screen on Android or desktop. It behaves like a native app with offline support and OS-level share target integration.
 - **OS Share Target** — On Android, ShareHub appears in the native share sheet. Select it from any app to beam files directly to a nearby device.
-- **Lightwave (no network at all)** — Send files with no Wi-Fi, no server and no pairing. One device shows them as an endless stream of animated QR codes; the other films it with its camera and rebuilds them. Fountain-coded, so dropped frames only cost time. See [Lightwave](#lightwave--transfer-with-no-network).
-- **Automatic Offline Fallback** — Lose the network and ShareHub switches itself to Lightwave, because a radar that will never find anything is not worth staring at. The app itself keeps working offline: the service worker holds a complete copy.
+- **PhotonHub (no network at all)** — Send files with no Wi-Fi, no server and no pairing. One device shows them as an endless stream of animated QR codes; the other films it with its camera and rebuilds them. Fountain-coded, so dropped frames only cost time. See [PhotonHub](#photonhub--transfer-with-no-network).
+- **Automatic Offline Fallback** — Lose the network and ShareHub switches itself to PhotonHub, because a radar that will never find anything is not worth staring at. The app itself keeps working offline: the service worker holds a complete copy.
 - **QR Code Pairing** — For devices not on the same network, generate a QR code to establish a direct connection via relay.
 - **WebSocket Relay Fallback** — When a direct WebRTC connection fails (strict NAT, firewall), the signaling server relays data as a fallback to guarantee delivery.
 - **Persistent Identity** — Each device gets a randomly generated name and avatar (e.g., "Cosmic Dolphin 🐬") stored in localStorage. Editable at any time.
@@ -60,8 +60,8 @@ sharehub/
     ├── identity.js   # Random identity generation and localStorage persistence
     ├── ui.js         # DOM manipulation, peer cards, transfer progress, drag-and-drop
     ├── style.css     # Full design system — dark monochrome theme, animations, responsive layout
-    ├── mode-switch.js # Radar / Lightwave tabs and the offline fallback
-    ├── optical/      # Lightwave: screen-to-camera transfer (no network involved)
+    ├── mode-switch.js # Radar / Photon tabs and the offline fallback
+    ├── optical/      # PhotonHub: screen-to-camera transfer (no network involved)
     │   ├── protocol.js      # Frame wire format, gzip, SHA-256
     │   ├── bundle.js        # Several files as one payload
     │   ├── fountain.js      # Luby transform encoder and peeling decoder
@@ -87,15 +87,15 @@ sharehub/
 
 4. **Relay Fallback** — If the WebRTC connection cannot be established (symmetric NAT, corporate firewall), the app falls back to relaying file data through the WebSocket server.
 
-## Lightwave — transfer with no network
+## PhotonHub — transfer with no network
 
-Everything above still needs *a* network. Lightwave needs none: it moves files
+Everything above still needs *a* network. PhotonHub needs none: it moves files
 from one screen into another device's camera. Air-gapped machine, hotel Wi-Fi
 that blocks peer traffic, guest network, aeroplane — the payload travels as
 light.
 
-The home screen has two tabs. **Radar** is everything above; **Lightwave** is
-this. Lose the network and the app moves to Lightwave on its own — tapping a tab
+The home screen has two tabs. **Radar** is everything above; **Photon** is
+this. Lose the network and the app moves to PhotonHub on its own — tapping a tab
 yourself pins the choice for the rest of the session, because being dragged
 between screens mid-task is worse than a stale tab.
 
@@ -157,7 +157,7 @@ receiver is struggling.
 ### Working offline
 
 The service worker keeps a copy of every asset it fetches, so the second visit
-owns a complete offline copy of the app and Lightwave works with the radio off.
+owns a complete offline copy of the app and PhotonHub works with the radio off.
 Asset filenames are content-hashed by the bundler, so they cannot be listed for
 pre-caching ahead of time — guessing them is what produced stale 404s in the
 past — and they are cached on the way through instead.
@@ -242,7 +242,7 @@ cd frontend
 npm test
 ```
 
-Covers the transfer queue, the service worker, and the Lightwave codec: Base45
+Covers the transfer queue, the service worker, and the PhotonHub codec: Base45
 round-trips, the wire format, fountain coding under frame loss, multi-file
 bundles, and a full loop where the real sender paints QR frames, jsQR reads
 those pixels back the way a camera would, and the real receiver reassembles the

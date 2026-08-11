@@ -9,7 +9,7 @@ const ASSETS = [
 // here ahead of time — pre-caching guesses is what produced 404s in the past.
 // Instead every same-origin asset is copied into the cache as it is fetched, so
 // the second visit owns a complete offline copy of the app. That matters more
-// than it used to: Lightwave is meant to work with no network at all, and it
+// than it used to: PhotonHub is meant to work with no network at all, and it
 // cannot if the page itself will not load.
 function isCacheableAsset(url) {
   return url.origin === self.location.origin && /\.(js|css|svg|png|ico|woff2?)$/.test(url.pathname);

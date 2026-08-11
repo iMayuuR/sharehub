@@ -63,16 +63,29 @@
         <!-- Mode switch — Radar needs a network, Lightwave needs none -->
         <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="Transfer mode">
           <button class="mode-tab active" id="modeTabRadar" data-mode="radar" role="tab" aria-selected="true">
-            <span class="mode-tab-icon">📡</span>
+            <span class="mode-tab-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                <circle cx="12" cy="12" r="2.4" />
+                <path d="M12 9.6V4.2" />
+                <path d="M7.4 16.6a6.5 6.5 0 0 1 9.2-9.2" />
+                <path d="M4.6 19.4a10.5 10.5 0 0 1 14.8-14.8" />
+              </svg>
+            </span>
             <span class="mode-tab-text">
               <span class="mode-tab-label">Radar</span>
               <span class="mode-tab-sub">Wi-Fi &amp; room code</span>
             </span>
           </button>
-          <button class="mode-tab" id="modeTabLightwave" data-mode="lightwave" role="tab" aria-selected="false">
-            <span class="mode-tab-icon">🔦</span>
+          <button class="mode-tab" id="modeTabPhoton" data-mode="photon" role="tab" aria-selected="false">
+            <span class="mode-tab-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                <circle cx="12" cy="12" r="3.1" />
+                <path d="M12 2.6v2.6M12 18.8v2.6M2.6 12h2.6M18.8 12h2.6" />
+                <path d="M5.4 5.4l1.9 1.9M16.7 16.7l1.9 1.9M18.6 5.4l-1.9 1.9M7.3 16.7l-1.9 1.9" />
+              </svg>
+            </span>
             <span class="mode-tab-text">
-              <span class="mode-tab-label">Lightwave</span>
+              <span class="mode-tab-label">Photon</span>
               <span class="mode-tab-sub">No network at all</span>
             </span>
           </button>
@@ -105,25 +118,53 @@
           </div>
         </section>
 
-        <!-- Lightwave — screen to camera, nothing in between -->
-        <section class="discovery-section mode-panel" id="lightwavePanel" role="tabpanel" aria-labelledby="modeTabLightwave">
-          <h2 class="section-title">ShareHub Lightwave <span class="section-title-dot"></span></h2>
-          <p class="section-subtitle">No Wi-Fi, no server, no pairing. One screen shows your files as moving light, the other camera drinks them in.</p>
+        <!-- PhotonHub — screen to camera, nothing in between -->
+        <section class="discovery-section mode-panel" id="photonPanel" role="tabpanel" aria-labelledby="modeTabPhoton">
+          <h2 class="section-title">PhotonHub <span class="section-title-dot"></span></h2>
+          <p class="section-subtitle">No Wi-Fi, no server, no pairing. One screen turns your files into moving light, the other reads it with its camera.</p>
 
           <div class="optical-choices">
             <button class="optical-choice" id="opticalBeamBtn">
-              <span class="optical-choice-icon">📤</span>
+              <span class="optical-choice-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                  <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                  <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                  <path d="M14 14h3v3h-3zM20 14v3M14 20h3M20 20h1" />
+                </svg>
+              </span>
               <span class="optical-choice-title">Beam</span>
-              <span class="optical-choice-sub">Show files as animated QR</span>
+              <span class="optical-choice-sub">Show files as light</span>
             </button>
             <button class="optical-choice" id="opticalCatchBtn">
-              <span class="optical-choice-icon">📷</span>
+              <span class="optical-choice-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 8V6.5A1.5 1.5 0 0 1 5.5 5H8" />
+                  <path d="M16 5h2.5A1.5 1.5 0 0 1 20 6.5V8" />
+                  <path d="M20 16v1.5a1.5 1.5 0 0 1-1.5 1.5H16" />
+                  <path d="M8 19H5.5A1.5 1.5 0 0 1 4 17.5V16" />
+                  <circle cx="12" cy="12" r="3.2" />
+                </svg>
+              </span>
               <span class="optical-choice-title">Catch</span>
-              <span class="optical-choice-sub">Point the camera at them</span>
+              <span class="optical-choice-sub">Point the camera at it</span>
             </button>
           </div>
 
           <p class="optical-note" id="opticalNote">Slow but unstoppable — best for documents, photos and short clips.</p>
+
+          <div class="offline-ready" id="offlineReady">
+            <span class="offline-ready-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <path d="M7 10l5 5 5-5M12 15V3" />
+              </svg>
+            </span>
+            <span class="offline-ready-text">
+              <strong>Install ShareHub</strong> so PhotonHub is already on the device when the network is not.
+            </span>
+            <button class="btn btn-primary offline-ready-btn" id="offlineReadyBtn">Install</button>
+          </div>
         </section>
       </main>
 
@@ -225,51 +266,61 @@
 
       <!-- Beam (send) -->
       <section class="optical-view" id="opticalBeamView">
-        <div class="optical-code-card">
-          <canvas id="opticalCanvas"></canvas>
-        </div>
-
-        <div class="optical-readout">
-          <div class="optical-stat"><span class="optical-stat-value" id="beamPass">0%</span><span class="optical-stat-label">Pass</span></div>
-          <div class="optical-stat"><span class="optical-stat-value" id="beamFrames">0</span><span class="optical-stat-label">Frames</span></div>
-          <div class="optical-stat"><span class="optical-stat-value" id="beamRate">0</span><span class="optical-stat-label">FPS</span></div>
-          <div class="optical-stat"><span class="optical-stat-value" id="beamLoop">—</span><span class="optical-stat-label">Loop</span></div>
-        </div>
-
-        <div class="optical-controls">
-          <div class="optical-control">
-            <label for="beamFpsInput">Speed <span id="beamFpsValue">12 fps</span></label>
-            <input type="range" id="beamFpsInput" min="4" max="24" step="1" value="12" />
-          </div>
-          <div class="optical-control">
-            <label>Density</label>
-            <div class="optical-segment" id="beamDensity"></div>
+        <!-- Sized from this box, never from window.innerHeight: on a phone the
+             URL bar changes that number and the code would jump about. -->
+        <div class="optical-code-wrap" id="beamCodeWrap">
+          <div class="optical-code-card">
+            <canvas id="opticalCanvas"></canvas>
           </div>
         </div>
 
-        <p class="optical-hint">Keep this screen still and let the other device film it. The stream loops forever — it does not matter where the camera joins in.</p>
+        <div class="optical-panel">
+          <div class="optical-readout">
+            <div class="optical-stat"><span class="optical-stat-value" id="beamPass">0%</span><span class="optical-stat-label">Pass</span></div>
+            <div class="optical-stat"><span class="optical-stat-value" id="beamFrames">0</span><span class="optical-stat-label">Frames</span></div>
+            <div class="optical-stat"><span class="optical-stat-value" id="beamRate">0</span><span class="optical-stat-label">FPS</span></div>
+            <div class="optical-stat"><span class="optical-stat-value" id="beamLoop">—</span><span class="optical-stat-label">Loop</span></div>
+          </div>
+
+          <div class="optical-controls">
+            <div class="optical-control">
+              <label for="beamFpsInput">Speed <span id="beamFpsValue">12 fps</span></label>
+              <input type="range" id="beamFpsInput" min="4" max="24" step="1" value="12" />
+            </div>
+            <div class="optical-control">
+              <label>Density</label>
+              <div class="optical-segment" id="beamDensity"></div>
+            </div>
+          </div>
+
+          <p class="optical-hint">Hold this screen still and let the other device film it — the stream loops forever.</p>
+        </div>
       </section>
 
       <!-- Catch (receive) -->
       <section class="optical-view" id="opticalCatchView">
-        <div class="optical-camera">
-          <video id="opticalVideo" playsinline muted autoplay></video>
-          <div class="optical-aim"></div>
+        <div class="optical-code-wrap">
+          <div class="optical-camera">
+            <video id="opticalVideo" playsinline muted autoplay></video>
+            <div class="optical-aim"></div>
+          </div>
         </div>
 
-        <div class="optical-progress">
-          <div class="optical-progress-bar"><div class="optical-progress-fill" id="catchFill"></div></div>
-          <span class="optical-progress-label" id="catchPercent">0%</span>
-        </div>
+        <div class="optical-panel">
+          <div class="optical-progress">
+            <div class="optical-progress-bar"><div class="optical-progress-fill" id="catchFill"></div></div>
+            <span class="optical-progress-label" id="catchPercent">0%</span>
+          </div>
 
-        <div class="optical-readout">
-          <div class="optical-stat"><span class="optical-stat-value" id="catchBlocks">0 / 0</span><span class="optical-stat-label">Blocks</span></div>
-          <div class="optical-stat"><span class="optical-stat-value" id="catchSpeed">—</span><span class="optical-stat-label">Speed</span></div>
-          <div class="optical-stat"><span class="optical-stat-value" id="catchLeft">—</span><span class="optical-stat-label">Left</span></div>
-        </div>
+          <div class="optical-readout">
+            <div class="optical-stat"><span class="optical-stat-value" id="catchBlocks">0 / 0</span><span class="optical-stat-label">Blocks</span></div>
+            <div class="optical-stat"><span class="optical-stat-value" id="catchSpeed">—</span><span class="optical-stat-label">Speed</span></div>
+            <div class="optical-stat"><span class="optical-stat-value" id="catchLeft">—</span><span class="optical-stat-label">Left</span></div>
+          </div>
 
-        <div class="optical-result" id="catchResult"></div>
-        <p class="optical-hint" id="catchHint">Fill the frame with the code and hold steady. Missed frames only cost time.</p>
+          <div class="optical-result" id="catchResult"></div>
+          <p class="optical-hint" id="catchHint">Fill the frame with the code and hold steady. Missed frames only cost time.</p>
+        </div>
       </section>
     </div>
 
