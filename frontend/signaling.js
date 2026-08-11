@@ -1,5 +1,8 @@
 // signaling.js - Enhanced logging for debugging
 
+/** Failed connects before we stop pretending the radar is merely empty. */
+const UNREACHABLE_AFTER = 3;
+
 // Cache public IP for 1 hour to avoid repeated fetches.
 // Persisted, not just held in memory: a reload used to re-ask, and a different
 // provider answering with a different address moved the device into a different
@@ -76,6 +79,7 @@ export class SignalingClient {
     this.onRoomJoined = null;
     this.onConnectionChange = null;
     this.onRouting = null;
+    this.onUnreachable = null;
     this.routedElsewhere = false;
     this.ws = null;
     this._roomId = null;
@@ -196,11 +200,19 @@ export class SignalingClient {
     };
   }
 
+  /** Retrying in silence looks identical to "nobody is nearby". Say which it is. */
+  _reportUnreachable() {
+    if (this._reconnectAttempts >= UNREACHABLE_AFTER && this.onUnreachable) {
+      this.onUnreachable(this._reconnectAttempts);
+    }
+  }
+
   _scheduleReconnect() {
     // Exponential backoff: start at 500ms, max 5 seconds
     const delay = Math.min(5000, 500 * (2 ** this._reconnectAttempts));
     this._reconnectTimer = setTimeout(() => this.connect(this._roomId), delay);
     this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
+    this._reportUnreachable();
   }
 
   disconnect() {

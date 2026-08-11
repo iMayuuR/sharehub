@@ -266,6 +266,25 @@ function init() {
     if (!hint.parentNode) empty.appendChild(hint);
   };
 
+  // The discovery server being down is indistinguishable from an empty room if
+  // all the user sees is a spinning radar. Name the problem, and point at the
+  // route that needs no server at all.
+  signalingClient.onUnreachable = () => {
+    const empty = document.getElementById('emptyState');
+    if (!empty || empty.querySelector('.radar-offline-hint')) return;
+    if (uiManager.peersContainer.querySelectorAll('.peer-card:not(.empty-state)').length) return;
+
+    const hint = document.createElement('div');
+    hint.className = 'radar-vpn-hint radar-offline-hint';
+    hint.innerHTML = '<strong>Cannot reach the discovery server.</strong> Radar needs it to find nearby devices. PhotonHub does not — it works with no network at all.';
+    const jump = document.createElement('button');
+    jump.className = 'btn btn-primary radar-offline-btn';
+    jump.textContent = 'Use PhotonHub';
+    jump.addEventListener('click', () => modeSwitch?.set(PHOTON, 'user'));
+    hint.appendChild(jump);
+    empty.appendChild(hint);
+  };
+
   signalingClient.onRoomJoined = (roomCode) => {
     // Clean up URL if it had ?room= param
     const url = new URL(window.location.href);

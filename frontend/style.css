@@ -1614,3 +1614,6 @@ body.stage-open { overflow: hidden; }
   .share-tray-actions { width: 100%; }
   .share-tray-btn { flex: 1; }
 }
+
+.radar-offline-hint strong { display: block; margin-bottom: 4px; color: #fff; }
+.radar-offline-btn { margin-top: 10px; width: 100%; padding: 10px; font-size: 0.8rem; }
