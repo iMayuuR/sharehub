@@ -8,9 +8,13 @@
     "dev:https": "vite --host --mode https",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test transfer-queue.test.js sw.test.js optical/optical.test.js optical/pipeline.test.js"
+    "test": "node --test transfer-queue.test.js sw.test.js optical/optical.test.js optical/pipeline.test.js",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:report": "playwright show-report"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "vite": "^8.0.9"
   },

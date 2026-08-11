@@ -397,7 +397,7 @@ export class UIManager {
     this.sheetPinned = false;
     this.transferSheet.classList.remove('open', 'collapsed');
     const footer = document.getElementById('appFooter');
-    if (footer) footer.style.paddingBottom = '30px';
+    if (footer) footer.style.paddingBottom = '';
   }
 
   /**

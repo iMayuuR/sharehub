@@ -26,3 +26,9 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright
+frontend/playwright-report/
+frontend/test-results/
+frontend/tests/e2e/.artifacts/
+frontend/playwright-results.xml

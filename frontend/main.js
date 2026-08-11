@@ -356,7 +356,7 @@ function init() {
     if (isIos && bubble && !localStorage.getItem('pwaInstallDeclined')) {
       const sub = document.getElementById('pwaBubbleSubtext');
       if (sub) sub.textContent = "Tap Share ➔ Add to Home Screen";
-      setTimeout(() => bubble.style.display = 'flex', 2000);
+      setTimeout(() => showInstallBubble(bubble), 2000);
     }
   }
 
@@ -368,7 +368,7 @@ function init() {
     // Show our custom UI
     const bubble = document.getElementById('pwaInstallBubble');
     if (bubble && !localStorage.getItem('pwaInstallDeclined')) {
-      setTimeout(() => bubble.style.display = 'flex', 1500); // Popup slightly faster
+      setTimeout(() => showInstallBubble(bubble), 1500);
     }
   });
 
@@ -410,7 +410,7 @@ function init() {
       const isIos = /ipad|iphone|ipod/.test(navigator.userAgent.toLowerCase()) && !window.MSStream;
       if (isIos) return; // iOS has no programmatic trigger, instructions are visible
 
-      installBubble.style.display = 'none';
+      hideInstallBubble(installBubble);
       if (deferredPrompt) {
         deferredPrompt.prompt();
         const { outcome } = await deferredPrompt.userChoice;
@@ -423,13 +423,13 @@ function init() {
   if (dismissBtn) {
     dismissBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      installBubble.style.display = 'none';
+      hideInstallBubble(installBubble);
       localStorage.setItem('pwaInstallDeclined', 'true');
     });
   }
 
   window.addEventListener('appinstalled', () => {
-    if (installBubble) installBubble.style.display = 'none';
+    if (installBubble) hideInstallBubble(installBubble);
     if (offlineReady) offlineReady.classList.remove('active');
     deferredPrompt = null;
   });
@@ -485,6 +485,17 @@ function checkPendingOSFiles() {
  * PhotonHub tab saw nothing at all after sharing from their gallery — and the
  * radar markup never came back.
  */
+/** The bubble floats over the bottom-right, so the footer is told to leave room. */
+function showInstallBubble(bubble) {
+  bubble.style.display = 'flex';
+  document.body.classList.add('has-install-bubble');
+}
+
+function hideInstallBubble(bubble) {
+  bubble.style.display = 'none';
+  document.body.classList.remove('has-install-bubble');
+}
+
 function showShareTray({ icon, title, sub, canBeam }) {
   const tray = document.getElementById('shareTray');
   if (!tray) return;
@@ -510,6 +521,9 @@ function showPendingShareUI() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  const year = document.getElementById('currentYear');
+  if (year) year.textContent = String(new Date().getFullYear());
+
   init();
   checkPendingOSFiles();
   
