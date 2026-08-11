@@ -227,6 +227,26 @@ describe('optical pipeline', () => {
     assert.equal(finished.verified, true);
   });
 
+  it('draws every frame at the same size', async () => {
+    const { OpticalSender } = await import('./sender.js');
+
+    const canvas = new FakeCanvas();
+    const sender = new OpticalSender(canvas);
+    sender.setDensity('normal');
+    sender.setTargetSize(420);
+    // Small file, so meta frames come round often enough to be jarring.
+    await sender.load(new File([new Uint8Array(5000).fill(3)], 'steady.bin'));
+
+    pendingFrames = [];
+    sender.start();
+    const widths = new Set();
+    pump(sender, canvas, (surface) => widths.add(surface.width), 12);
+    sender.stop();
+
+    // A code that changes size every few frames makes the receiver re-aim.
+    assert.equal(widths.size, 1, `canvas resized mid-stream: ${[...widths].join(', ')}px`);
+  });
+
   it('recovers when the sender changes density mid-beam', async () => {
     const { OpticalSender } = await import('./sender.js');
     const { OpticalReceiver } = await import('./receiver.js');

@@ -11,13 +11,14 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('./public/sw.js', import.meta.url), 'utf8');
 const ORIGIN = 'https://sharehub.test';
 
-function loadWorker({ networkFails = false } = {}) {
+function loadWorker({ networkFails = false, missing = [] } = {}) {
   const listeners = {};
   const stored = new Map();
 
   const cache = {
     addAll: async (urls) => urls.forEach((url) => stored.set(url, `precached:${url}`)),
     put: async (request, response) => stored.set(keyOf(request), response),
+    match: async (request) => stored.get(keyOf(request)),
     keys: async () => [...stored.keys()],
   };
 
@@ -38,9 +39,18 @@ function loadWorker({ networkFails = false } = {}) {
       keys: async () => ['sharehub-v6', 'sharehub-v1'],
       delete: async () => true,
     },
-    fetch: async () => {
+    fetch: async (request) => {
       if (networkFails) throw new Error('offline');
-      return { ok: true, type: 'basic', clone: () => 'network-body', body: 'network-body' };
+      const url = keyOf(request);
+      if (missing.includes(url)) return { ok: false, status: 404, type: 'basic', text: async () => '' };
+      const body = url === '/' || url.endsWith('/')
+        ? '<script src="/assets/index-ABC.js"></script><link href="/assets/index-XYZ.css">'
+        : url.endsWith('index-ABC.js')
+          ? 'new Worker(new URL(`/assets/decode-worker-QQQ.js`, import.meta.url))'
+          : 'body';
+      const response = { ok: true, type: 'basic', body, text: async () => body };
+      response.clone = () => response;
+      return response;
     },
     Response: { error: () => 'response-error', redirect: (to) => `redirect:${to}` },
     File: class {},
@@ -82,13 +92,41 @@ describe('service worker', () => {
     assert.ok(worker.listeners.fetch?.length, 'no fetch handler');
   });
 
-  it('pre-caches the app shell on install', async () => {
+  async function install(target = worker) {
     const waits = [];
-    worker.listeners.install[0]({ waitUntil: (promise) => waits.push(promise) });
+    target.listeners.install[0]({ waitUntil: (promise) => waits.push(promise) });
     await Promise.all(waits);
+  }
 
+  it('pre-caches the app shell on install', async () => {
+    await install();
     assert.ok(worker.stored.has('/'), 'app shell was not pre-cached');
     assert.ok(worker.stored.has('/manifest.json'), 'manifest was not pre-cached');
+  });
+
+  it('pre-caches the hashed assets the shell names', async () => {
+    await install();
+    // Without this the first visit has no offline copy at all: the page's own
+    // assets were fetched before the worker existed to intercept them.
+    assert.ok(worker.stored.has('/assets/index-ABC.js'), 'main bundle not pre-cached');
+    assert.ok(worker.stored.has('/assets/index-XYZ.css'), 'stylesheet not pre-cached');
+  });
+
+  it('follows the bundle to the worker chunk it loads', async () => {
+    await install();
+    // The decode worker is only ever named inside the main bundle, never in the
+    // HTML — miss it and catching a transfer offline fails on Safari/Firefox.
+    assert.ok(worker.stored.has('/assets/decode-worker-QQQ.js'), 'decode worker not pre-cached');
+  });
+
+  it('survives an asset that no longer exists', async () => {
+    // One stale URL must not sink the rest of the pre-cache.
+    const flaky = loadWorker({ missing: ['/assets/index-XYZ.css'] });
+    await assert.doesNotReject(() => install(flaky));
+
+    assert.ok(flaky.stored.has('/'), 'shell lost when an asset 404d');
+    assert.ok(flaky.stored.has('/assets/index-ABC.js'), 'sibling asset lost when one 404d');
+    assert.equal(flaky.stored.has('/assets/index-XYZ.css'), false, 'cached a 404');
   });
 
   it('keeps a copy of every hashed asset it fetches', async () => {

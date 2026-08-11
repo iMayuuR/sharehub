@@ -15,12 +15,55 @@ function isCacheableAsset(url) {
   return url.origin === self.location.origin && /\.(js|css|svg|png|ico|woff2?)$/.test(url.pathname);
 }
 
+// Same-origin asset references, in markup ("/assets/x.js") or in code (`/assets/x.js`).
+const ASSET_PATTERN = /["'`(](\/[^"'`)\s]+\.(?:js|css|svg))["'`)]/g;
+
+/**
+ * The page's own assets are fetched before this worker exists to see them, so
+ * relying on the fetch handler alone leaves the first visit with no offline
+ * copy. Their filenames are content-hashed and cannot be listed here ahead of
+ * time either — that is what produced stale 404s in the past. So read the shell
+ * for its assets, then read those for the chunks they pull in turn: the decode
+ * worker is only ever named inside the main bundle, never in the HTML.
+ */
+async function precache() {
+  const cache = await caches.open(CACHE_NAME);
+  await cache.addAll(ASSETS);
+
+  try {
+    const shell = await fetch('/', { cache: 'reload' });
+    await cache.put('/', shell.clone());
+
+    const direct = assetsIn(await shell.text());
+    await cacheEach(cache, direct);
+
+    const nested = new Set();
+    for (const url of direct.filter((entry) => entry.endsWith('.js'))) {
+      const hit = await cache.match(url);
+      if (hit) for (const found of assetsIn(await hit.clone().text())) nested.add(found);
+    }
+    await cacheEach(cache, [...nested].filter((url) => !direct.includes(url)));
+  } catch {
+    // Runtime caching picks them up on the next load instead.
+  }
+}
+
+function assetsIn(text) {
+  return [...new Set([...text.matchAll(ASSET_PATTERN)].map((match) => match[1]))];
+}
+
+/** One at a time, so a single stale URL cannot sink the whole pre-cache. */
+async function cacheEach(cache, urls) {
+  await Promise.allSettled(urls.map(async (url) => {
+    const response = await fetch(url, { cache: 'reload' });
+    if (response.ok) await cache.put(url, response);
+  }));
+}
+
 // Activate immediately
 self.addEventListener('install', (e) => {
   self.skipWaiting();
-  e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
-  );
+  e.waitUntil(precache());
 });
 
 // Claim all tabs immediately

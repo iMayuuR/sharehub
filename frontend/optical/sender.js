@@ -34,6 +34,9 @@ function metaCadence(blocks) {
   return Math.max(2, Math.min(META_EVERY, Math.floor(blocks / 3)));
 }
 
+/** Bytes that `,"p":""` itself costs in the meta JSON. */
+const PAD_FIELD_OVERHEAD = 7;
+
 /** Optical is a slow channel; beyond this a transfer stops being reasonable. */
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;
 
@@ -172,16 +175,30 @@ export class OpticalSender {
 
     const blockSize = this.density.bytes - DATA_HEADER_SIZE;
     this.encoder = new LTEncoder(this.payload, blockSize);
-    this.metaText = frameToText(
+    this.metaText = frameToText(this._metaFrame(blockSize));
+    this.seed = 0;
+  }
+
+  /**
+   * Meta frames carry far less than a data frame, which would put them in a
+   * smaller QR version — and a code that changes size every few frames makes
+   * the receiver re-aim mid-transfer. Pad it out to the same length so every
+   * frame in the stream draws at exactly the same size.
+   */
+  _metaFrame(blockSize) {
+    const build = (meta) =>
       packMetaFrame({
         sessionId: this.sessionId,
         flags: this.flags,
         totalLen: this.payload.length,
         blockSize,
-        meta: this._fitMeta(),
-      })
-    );
-    this.seed = 0;
+        meta,
+      });
+
+    const meta = this._fitMeta();
+    const bytes = build(meta);
+    const slack = this.density.bytes - bytes.length - PAD_FIELD_OVERHEAD;
+    return slack > 0 ? build({ ...meta, p: 'A'.repeat(slack) }) : bytes;
   }
 
   /** Keep the meta frame inside one QR by shortening an over-long filename. */
